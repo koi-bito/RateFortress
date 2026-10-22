@@ -69,6 +69,23 @@ class LeakyBucket:
         self._leak(user_id, now)
         return len(self.queues[user_id])
 
+    @property
+    def limit(self) -> int:
+        """Returns the nominal capacity of the bucket."""
+        return self.capacity
+
+    def get_remaining(self, user_id: str) -> int:
+        """Returns the remaining empty slots in the bucket queue."""
+        return self.get_remaining_capacity(user_id)
+
+    def get_retry_after(self, user_id: str) -> int:
+        """Returns the number of seconds until a slot leaks out."""
+        if self.get_remaining(user_id) > 0:
+            return 0
+        import math
+
+        return max(1, math.ceil(1.0 / self.leak_rate))
+
     def get_remaining_capacity(self, user_id: str) -> int:
         """Returns the remaining empty capacity in the bucket for user_id."""
         return max(0, self.capacity - self.get_queue_size(user_id))

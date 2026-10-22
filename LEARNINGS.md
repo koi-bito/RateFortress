@@ -85,12 +85,12 @@ A structured record of architectural decisions, DSA insights, failure modes, and
 ## 📅 Week 3 — Sliding Window Counter, Token Bucket & Leaky Bucket (Days 16–21)
 
 ### Day 16 — Sliding Window Counter Mechanics
-- **Weighted Approximation Math:** The formula is $\text{Estimated} = (\text{Previous Window Count} \times \text{Weight of Previous}) + \text{Current Window Count}$, where $\text{Weight of Previous} = 1 - (\text{Elapsed in Current Window} / \text{Window Duration})$. For example, if a 60-second window is 15 seconds in (25% elapsed), the previous window is weighted at 75%. If 100 requests occurred in the prior window and 10 have occurred so far in this window, the estimated count is $(100 \times 0.75) + 10 = 85$.
+- **Weighted Approximation Math:** The formula is $\text{Estimated} = (\text{Previous Window Count} \times \text{Weight of Previous}) + \text{Current Window Count}$, where $\text{Weight of Previous} = 1 - (\text{Elapsed in Current Window} / \text{Window Duration})$.
 - **Why It Beats Both Predecessors:** Provides boundary smoothing without storing timestamps. Memory is strictly $O(1)$ (only 2 integer counters per client), yet boundary burst error is typically $<5\%$ in production traffic.
 
 ### Day 17 — Token Bucket Mechanics
-- **Lazy Refill Calculation:** Rather than maintaining background threads or cron timers constantly refilling buckets (which would thrash CPU with millions of users), tokens are refilled lazily on each request: $\Delta t = \text{now} - \text{last\_refill}$, $\text{new\_tokens} = \min(\text{capacity}, \text{tokens} + \Delta t \times \text{refill\_rate})$.
-- **Why Stripe & GitHub Choose Token Bucket:** Real-world traffic is inherently bursty (e.g., page load with 20 parallel asset calls). Token Bucket accommodates legitimate short-term spikes up to `capacity` while guaranteeing the long-term consumption never exceeds `refill_rate`.
+- **Lazy Refill Calculation:** Rather than maintaining background threads or cron timers constantly refilling buckets, tokens are refilled lazily on each request: $\Delta t = \text{now} - \text{last\_refill}$, $\text{new\_tokens} = \min(\text{capacity}, \text{tokens} + \Delta t \times \text{refill\_rate})$.
+- **Why Stripe & GitHub Choose Token Bucket:** Real-world traffic is inherently bursty. Token Bucket accommodates legitimate short-term spikes up to `capacity` while guaranteeing long-term consumption never exceeds `refill_rate`.
 
 ### Day 18 — Leaky Bucket Mechanics
 - **Constant Egress vs. Token Bucket:** Token Bucket allows bursts to pass immediately through to the backend as long as tokens exist. Leaky Bucket queues requests and leaks them at a fixed, uniform rate.
@@ -103,13 +103,42 @@ A structured record of architectural decisions, DSA insights, failure modes, and
   - Leaky Bucket: **~2.58M req/s**
   - Sliding Window Counter: **~2.12M req/s**
   - Token Bucket: **~2.07M req/s**
-- **Observation:** All five pure Python algorithms achieve $>2.0\text{M}$ operations/sec when in-memory. The real performance divergence will emerge in Weeks 6–8 when network I/O, Redis serialization, and Lua script atomicity are introduced.
 
 ### Day 20 — DSA Practice Day: Core Patterns
 - **Sliding Window Maximum (LeetCode #239):** Monotonic deque pattern. Elements smaller than the incoming element are popped from the back; expired indices are popped from the front. Identical to timestamp eviction in Sliding Window Log.
 - **Design Hit Counter (LeetCode #362):** Circular buffer / fixed bucket pattern. Modulo arithmetic `time % 300` mirrors the fixed and sliding window counter index calculations.
-- **Kth Largest Element in a Stream (LeetCode #703):** Min-heap pattern of size $k$. Incoming elements maintain the top $k$ items with $O(\log k)$ push-pop. This same priority pattern will power our tiered rate limiter (serving enterprise priority queues before free queues).
+- **Kth Largest Element in a Stream (LeetCode #703):** Min-heap pattern of size $k$. Incoming elements maintain the top $k$ items with $O(\log k)$ push-pop.
 
 ### Day 21 — Week 3 Review & Milestone Complete
 - **Status:** All 5 foundation algorithms are fully implemented, strictly typed, formatted with Black/Ruff, verified with 27 passing unit tests, and comparatively benchmarked.
-- **Next Milestone:** Week 4 — FastAPI Middleware Layer (wrapping algorithms into ASGI HTTP request pipelines with standard headers: `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `Retry-After`).
+
+---
+
+## 📅 Week 4 — FastAPI Middleware Layer I (Days 22–27)
+
+### Day 22 — ASGI Architecture & Uvicorn
+- **What is ASGI:** Asynchronous Server Gateway Interface is the modern Python asynchronous standard (successor to synchronous WSGI like Gunicorn/Flask). It standardizes how asynchronous Python applications handle HTTP, HTTP/2, and WebSockets over `async`/`await` event loops.
+- **Why FastAPI Requires Uvicorn:** FastAPI is solely an application framework responsible for request routing, schema serialization (Pydantic), and dependency injection. It does not contain an HTTP socket parser or TCP network listener. Uvicorn is the high-performance ASGI server (built on `uvloop` and `httptools`) that binds to OS network sockets, parses raw HTTP bytes, and invokes FastAPI's ASGI interface.
+
+### Day 23 — Middleware Dispatch Pipeline
+- **Request Interception:** `RateLimitMiddleware` inherits from Starlette's `BaseHTTPMiddleware`. By overriding `dispatch(request, call_next)`, rate limit evaluation happens *before* request parameters are deserialized or database transactions are opened. When limits are exceeded, an early HTTP 429 response is returned immediately, shedding server load with near-zero resource expenditure.
+
+### Day 24 — Rate Limit Headers on Every Response
+- **Why Send Headers on 200 OK:** Professional APIs (Stripe, GitHub, OpenAI) return `X-RateLimit-Limit`, `X-RateLimit-Remaining`, and `Retry-After` on *every* response, not just when a client gets blocked (429).
+  - *Proactive Throttling:* Client SDKs can monitor `X-RateLimit-Remaining` and voluntarily throttle or queue their own requests as the remaining quota approaches zero, avoiding unexpected exceptions.
+  - *Debugging Visibility:* API consumers can immediately see their consumption without guessing how close they are to the threshold.
+
+### Day 25 — Per-Endpoint Quota Isolation
+- **Granular Throttling:** Different endpoints have radically different resource costs. While a lightweight health check `/health` can support 200 req/min, a resource-intensive analytics or AI endpoint `/api/expensive-endpoint` must be clamped to 5 or 10 req/min. Isolating quotas by path ensures an attacker spamming an expensive endpoint does not exhaust the user's quota for unrelated lightweight endpoints.
+
+### Day 26 — API Key Security & Tier Multipliers
+- **Why Headers over Query Parameters:** API keys must *never* be accepted in URL query parameters (e.g. `?api_key=xyz`):
+  1. URLs are logged in plain text in browser histories, proxy logs, load balancer access logs (Nginx/Cloudflare), and application APM traces.
+  2. The HTTP `Referer` header automatically leaks query parameters to external third-party domains when clicking links.
+  3. Putting keys in headers (`X-API-Key` or `Authorization: Bearer`) ensures sensitive credentials remain shielded from standard access logs and referrers.
+- **Tier-Based Multipliers:** Enabled dynamic multiplier resolution (`key_free_abc` = 1x, `key_paid_xyz` = 10x, `key_enterprise_999` = 50x), multiplying nominal endpoint limits accordingly.
+
+### Day 27 — DSA Practice: Hashing & Design Patterns
+- **LRU Cache (LeetCode #146):** Hashmap + Doubly Linked List. How it applies to RateFortress: If millions of distinct IP addresses hit the gateway, storing unbounded per-IP state in memory leads to out-of-memory (OOM) crashes. An LRU Cache eviction policy caps the active tracking set to the top $K$ most recent users.
+- **Insert Delete GetRandom O(1) (LeetCode #381):** Hashmap (value $\to$ index) + Dynamic Array. Allows $O(1)$ deletes by swapping the target element with the last element in the array before popping.
+- **Design Twitter (LeetCode #355):** Combines Hashmaps for follow graphs and Min/Max-Heaps for $k$-way merge of user timelines. Directly mirrors our Week 5 tiered priority queue architecture.

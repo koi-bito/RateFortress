@@ -84,3 +84,12 @@ class SlidingWindowCounter:
         """Returns remaining estimated capacity for user_id."""
         estimated = self.get_estimated_count(user_id)
         return max(0, int(self.limit - estimated))
+
+    def get_retry_after(self, user_id: str) -> int:
+        """Returns seconds until current window expires and weight resets."""
+        if self.get_remaining(user_id) > 0:
+            return 0
+        now = time.time()
+        current_id = int(now // self.window_seconds)
+        reset_time = (current_id + 1) * self.window_seconds
+        return max(1, int(reset_time - now))

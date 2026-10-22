@@ -39,8 +39,8 @@ ratefortress/
 
 ## 🚦 Status & Milestones
 
-- **Current Status:** Week 3 — All 5 Core Algorithms Implemented & Benchmarked (Pure Python) ✅
-- **Next Milestone:** Week 4 — FastAPI Middleware Layer I (HTTP 429, Headers & Key Extractors)
+- **Current Status:** Week 4 — FastAPI Middleware Layer I Complete (HTTP 429, Headers, Tiers & Key Extractors) ✅
+- **Next Milestone:** Week 5 — FastAPI Middleware Layer II (Tiering, Priority Queues, Trie Route Matching & Fail-Open Resilience)
 
 ---
 

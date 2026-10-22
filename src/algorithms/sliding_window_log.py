@@ -77,3 +77,10 @@ class SlidingWindowLog:
             return now
         # Oldest timestamp + window duration is when the earliest slot frees up
         return log[0] + self.window_seconds
+
+    def get_retry_after(self, user_id: str) -> int:
+        """Returns the number of seconds until an existing request timestamp expires."""
+        if self.get_remaining(user_id) > 0:
+            return 0
+        now = time.time()
+        return max(1, int(self.get_reset_time(user_id) - now))

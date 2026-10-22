@@ -57,6 +57,25 @@ class TokenBucket:
             return True
         return False
 
+    @property
+    def limit(self) -> int:
+        """Returns the nominal limit / capacity of the bucket."""
+        return int(self.capacity)
+
+    def get_remaining(self, user_id: str) -> int:
+        """Returns available remaining tokens rounded down to an integer."""
+        return max(0, int(self.get_tokens(user_id)))
+
+    def get_retry_after(self, user_id: str) -> int:
+        """Returns the number of seconds until at least 1 token is refilled."""
+        tokens = self.get_tokens(user_id)
+        if tokens >= 1.0:
+            return 0
+        deficit = 1.0 - tokens
+        import math
+
+        return max(1, math.ceil(deficit / self.refill_rate))
+
     def get_tokens(self, user_id: str) -> float:
         """Returns the current available tokens for user_id after accounting for elapsed time."""
         now = time.time()
