@@ -39,8 +39,8 @@ ratefortress/
 
 ## 🚦 Status & Milestones
 
-- **Current Status:** Week 2 — Fixed Window & Sliding Window Log Implemented & Benchmarked ✅
-- **Next Milestone:** Week 3 — Sliding Window Counter, Token Bucket & Leaky Bucket
+- **Current Status:** Week 3 — All 5 Core Algorithms Implemented & Benchmarked (Pure Python) ✅
+- **Next Milestone:** Week 4 — FastAPI Middleware Layer I (HTTP 429, Headers & Key Extractors)
 
 ---
 

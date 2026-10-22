@@ -16,11 +16,11 @@ This document tracks empirical throughput, latency, and memory characteristics a
 
 | Algorithm | Throughput (req/s) | Allowed | Blocked | Elapsed (s) | Memory / User | Burst Tolerance | Boundary Leak? |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **Fixed Window Counter** | **3,278,151 req/s** | 5,000 | 5,000 | 0.0031s | $O(1)$ (~48 bytes) | None | **Yes (up to 2x limit)** |
-| **Sliding Window Log** | **3,179,145 req/s** | 5,000 | 5,000 | 0.0031s | $O(N)$ (timestamps) | None | **No (Strict Guarantee)** |
-| **Sliding Window Counter** | *Pending (Day 16)* | - | - | - | $O(1)$ (~few bytes) | None | No (Approximation) |
-| **Token Bucket** | *Pending (Day 17)* | - | - | - | $O(1)$ (~few bytes) | Configurable burst | No |
-| **Leaky Bucket** | *Pending (Day 18)* | - | - | - | $O(\text{Queue size})$ | Strict queue outflow | No |
+| **Fixed Window Counter** | **2,819,761 req/s** | 5,000 | 5,000 | 0.0035s | $O(1)$ (~48 bytes) | None | **Yes (up to 2x limit)** |
+| **Sliding Window Log** | **3,471,620 req/s** | 5,000 | 5,000 | 0.0029s | $O(N)$ (timestamps) | None | **No (Strict Guarantee)** |
+| **Sliding Window Counter** | **2,115,551 req/s** | 5,000 | 5,000 | 0.0047s | $O(1)$ (~64 bytes) | None | **No (Smooth Approximation)** |
+| **Token Bucket** | **2,066,073 req/s** | 5,000 | 5,000 | 0.0048s | $O(1)$ (~48 bytes) | Configurable burst | **No** |
+| **Leaky Bucket** | **2,580,845 req/s** | 5,000 | 5,000 | 0.0039s | $O(\text{Queue size})$ | Strict queue outflow | **No** |
 
 ---
 

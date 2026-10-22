@@ -65,7 +65,7 @@ A structured record of architectural decisions, DSA insights, failure modes, and
 
 ### Day 12 — Testing & Benchmarking Fixed Window
 - **Test Findings:** Validated clean reset when window rollover occurs (`sleep(window_seconds + delta)`), independent quotas per user ID, and remaining count decrements.
-- **Throughput:** Achieved **~3.28M req/s** in in-memory pure Python.
+- **Throughput:** Achieved **~2.82M req/s** in in-memory pure Python.
 
 ### Day 13 — Sliding Window Log Mechanics
 - **Precision with Deques:** Sliding Window Log records every individual timestamp in a `collections.deque`. Upon every request, timestamps $\le \text{now} - \text{window}$ are popped from the left.
@@ -74,8 +74,42 @@ A structured record of architectural decisions, DSA insights, failure modes, and
 
 ### Day 14 — Testing & Benchmarking Sliding Window Log
 - **Test Findings:** Verified that slots open gradually as individual timestamps exit the rolling window, rather than releasing all quota in a single abrupt reset.
-- **Throughput:** Achieved **~3.18M req/s** in in-memory pure Python.
+- **Throughput:** Achieved **~3.47M req/s** in in-memory pure Python.
 
 ### Day 15 — Empirical Comparison (Fixed Window vs. Sliding Window Log)
 - **Script Evidence:** `benchmarks/compare_window_boundary.py` verified that with limit=5/10s, sending 5 requests at $t=8.0..9.9\text{s}$ and 5 requests at $t=10.1..10.5\text{s}$ allowed all 10 in Fixed Window Counter (100% leak) while Sliding Window Log blocked requests 6 through 10.
 - **Production Choice:** For a payments API, Sliding Window Log (or Token Bucket) is mandatory because downstream bank gateways cannot survive 2x load spikes. For internal rate limiting of high-throughput read endpoints where occasional bursts are benign, Fixed Window Counter is vastly more memory-efficient.
+
+---
+
+## 📅 Week 3 — Sliding Window Counter, Token Bucket & Leaky Bucket (Days 16–21)
+
+### Day 16 — Sliding Window Counter Mechanics
+- **Weighted Approximation Math:** The formula is $\text{Estimated} = (\text{Previous Window Count} \times \text{Weight of Previous}) + \text{Current Window Count}$, where $\text{Weight of Previous} = 1 - (\text{Elapsed in Current Window} / \text{Window Duration})$. For example, if a 60-second window is 15 seconds in (25% elapsed), the previous window is weighted at 75%. If 100 requests occurred in the prior window and 10 have occurred so far in this window, the estimated count is $(100 \times 0.75) + 10 = 85$.
+- **Why It Beats Both Predecessors:** Provides boundary smoothing without storing timestamps. Memory is strictly $O(1)$ (only 2 integer counters per client), yet boundary burst error is typically $<5\%$ in production traffic.
+
+### Day 17 — Token Bucket Mechanics
+- **Lazy Refill Calculation:** Rather than maintaining background threads or cron timers constantly refilling buckets (which would thrash CPU with millions of users), tokens are refilled lazily on each request: $\Delta t = \text{now} - \text{last\_refill}$, $\text{new\_tokens} = \min(\text{capacity}, \text{tokens} + \Delta t \times \text{refill\_rate})$.
+- **Why Stripe & GitHub Choose Token Bucket:** Real-world traffic is inherently bursty (e.g., page load with 20 parallel asset calls). Token Bucket accommodates legitimate short-term spikes up to `capacity` while guaranteeing the long-term consumption never exceeds `refill_rate`.
+
+### Day 18 — Leaky Bucket Mechanics
+- **Constant Egress vs. Token Bucket:** Token Bucket allows bursts to pass immediately through to the backend as long as tokens exist. Leaky Bucket queues requests and leaks them at a fixed, uniform rate.
+- **User Experience Contrast:** For an API consumer, Token Bucket delivers lower latency during bursts (requests execute immediately). Leaky Bucket introduces queueing delay (or drops if queue is full), but provides an absolutely flat downstream request rate, protecting fragile dependencies like legacy databases.
+
+### Day 19 — Full 5-Algorithm Benchmark Suite
+- **Throughput Profile (Pure Python, 10,000 requests, 100 users):**
+  - Sliding Window Log: **~3.47M req/s**
+  - Fixed Window Counter: **~2.82M req/s**
+  - Leaky Bucket: **~2.58M req/s**
+  - Sliding Window Counter: **~2.12M req/s**
+  - Token Bucket: **~2.07M req/s**
+- **Observation:** All five pure Python algorithms achieve $>2.0\text{M}$ operations/sec when in-memory. The real performance divergence will emerge in Weeks 6–8 when network I/O, Redis serialization, and Lua script atomicity are introduced.
+
+### Day 20 — DSA Practice Day: Core Patterns
+- **Sliding Window Maximum (LeetCode #239):** Monotonic deque pattern. Elements smaller than the incoming element are popped from the back; expired indices are popped from the front. Identical to timestamp eviction in Sliding Window Log.
+- **Design Hit Counter (LeetCode #362):** Circular buffer / fixed bucket pattern. Modulo arithmetic `time % 300` mirrors the fixed and sliding window counter index calculations.
+- **Kth Largest Element in a Stream (LeetCode #703):** Min-heap pattern of size $k$. Incoming elements maintain the top $k$ items with $O(\log k)$ push-pop. This same priority pattern will power our tiered rate limiter (serving enterprise priority queues before free queues).
+
+### Day 21 — Week 3 Review & Milestone Complete
+- **Status:** All 5 foundation algorithms are fully implemented, strictly typed, formatted with Black/Ruff, verified with 27 passing unit tests, and comparatively benchmarked.
+- **Next Milestone:** Week 4 — FastAPI Middleware Layer (wrapping algorithms into ASGI HTTP request pipelines with standard headers: `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `Retry-After`).

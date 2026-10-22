@@ -11,7 +11,10 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.algorithms.fixed_window import FixedWindowCounter
+from src.algorithms.leaky_bucket import LeakyBucket
+from src.algorithms.sliding_window_counter import SlidingWindowCounter
 from src.algorithms.sliding_window_log import SlidingWindowLog
+from src.algorithms.token_bucket import TokenBucket
 
 
 def benchmark_algorithm(
@@ -45,13 +48,16 @@ def benchmark_algorithm(
 
 def run_all_benchmarks():
     print("==================================================")
-    print("      RateFortress Algorithm Benchmark Suite      ")
+    print("      RateFortress 5-Algorithm Benchmark Suite    ")
     print("==================================================")
 
     # Standard benchmark profile: 10,000 requests across 100 users, limit=50 per 10s
     algorithms = [
         (FixedWindowCounter(limit=50, window_seconds=10), "Fixed Window Counter"),
         (SlidingWindowLog(limit=50, window_seconds=10), "Sliding Window Log"),
+        (SlidingWindowCounter(limit=50, window_seconds=10), "Sliding Window Counter"),
+        (TokenBucket(capacity=50, refill_rate_per_sec=5.0), "Token Bucket"),
+        (LeakyBucket(capacity=50, leak_rate_per_sec=5.0), "Leaky Bucket"),
     ]
 
     results = []
