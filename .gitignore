@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+.env
+ratefortress_env/
+.venv/
+*.log
+.pytest_cache/
+.ruff_cache/
