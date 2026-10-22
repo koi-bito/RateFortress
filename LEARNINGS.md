@@ -54,3 +54,28 @@ A structured record of architectural decisions, DSA insights, failure modes, and
 
 ### Day 10 — Week 1 Review
 - **Reflection:** Scaffolded core directory structure, configured isolated Python virtual environment, integrated pytest, established baseline benchmark harness, and validated clean code formatting with Ruff and Black. Ready to implement pure algorithms starting with Fixed Window Counter.
+
+---
+
+## 📅 Week 2 — Fixed Window & Sliding Window Log (Days 11–15)
+
+### Day 11 — Fixed Window Counter Mechanics
+- **The Boundary Burst Problem:** Fixed Window evaluates `current_window = int(now // window_seconds)`. If window size is 60s and limit is 100 requests, a client can send 100 requests at $t=59\text{s}$ (window 0) and another 100 requests at $t=60\text{s}$ (window 1). The service experiences 200 requests in a 2-second interval — twice the intended peak load.
+- **Complexity:** $O(1)$ time, $O(1)$ memory per client.
+
+### Day 12 — Testing & Benchmarking Fixed Window
+- **Test Findings:** Validated clean reset when window rollover occurs (`sleep(window_seconds + delta)`), independent quotas per user ID, and remaining count decrements.
+- **Throughput:** Achieved **~3.28M req/s** in in-memory pure Python.
+
+### Day 13 — Sliding Window Log Mechanics
+- **Precision with Deques:** Sliding Window Log records every individual timestamp in a `collections.deque`. Upon every request, timestamps $\le \text{now} - \text{window}$ are popped from the left.
+- **Exact Enforcement:** Because the rolling window $[now - window, now]$ is continuously updated, boundary spikes are impossible.
+- **Tradeoff:** Storing every timestamp consumes $O(N)$ memory. At $10^5$ requests per minute across $10^6$ active users, memory footprint would balloon into tens of gigabytes in Redis.
+
+### Day 14 — Testing & Benchmarking Sliding Window Log
+- **Test Findings:** Verified that slots open gradually as individual timestamps exit the rolling window, rather than releasing all quota in a single abrupt reset.
+- **Throughput:** Achieved **~3.18M req/s** in in-memory pure Python.
+
+### Day 15 — Empirical Comparison (Fixed Window vs. Sliding Window Log)
+- **Script Evidence:** `benchmarks/compare_window_boundary.py` verified that with limit=5/10s, sending 5 requests at $t=8.0..9.9\text{s}$ and 5 requests at $t=10.1..10.5\text{s}$ allowed all 10 in Fixed Window Counter (100% leak) while Sliding Window Log blocked requests 6 through 10.
+- **Production Choice:** For a payments API, Sliding Window Log (or Token Bucket) is mandatory because downstream bank gateways cannot survive 2x load spikes. For internal rate limiting of high-throughput read endpoints where occasional bursts are benign, Fixed Window Counter is vastly more memory-efficient.

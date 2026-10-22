@@ -39,8 +39,8 @@ ratefortress/
 
 ## 🚦 Status & Milestones
 
-- **Current Status:** Week 1 — Environment Setup & Project Scaffold Complete ✅
-- **Next Milestone:** Week 2 — Core Algorithms: Fixed Window Counter & Sliding Window Log
+- **Current Status:** Week 2 — Fixed Window & Sliding Window Log Implemented & Benchmarked ✅
+- **Next Milestone:** Week 3 — Sliding Window Counter, Token Bucket & Leaky Bucket
 
 ---
 
