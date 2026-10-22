@@ -1,0 +1,89 @@
+"""Tests for CircuitBreaker resilience pattern."""
+
+from unittest.mock import patch
+
+from src.middleware.circuit_breaker import CircuitBreaker
+
+
+def test_closed_state_success():
+    cb = CircuitBreaker(failure_threshold=3, recovery_timeout=10.0)
+    assert cb.is_closed
+
+    result = cb.call(lambda: "success")
+    assert result == "success"
+    assert cb.is_closed
+    assert cb.failures == 0
+
+
+def test_trips_to_open_after_failure_threshold():
+    cb = CircuitBreaker(failure_threshold=3, recovery_timeout=10.0, fail_open=True)
+
+    call_count = 0
+
+    def failing_call():
+        nonlocal call_count
+        call_count += 1
+        raise ConnectionError("Redis unreachable")
+
+    # Call 1 & 2 fail but don't trip breaker
+    assert cb.call(failing_call) is True
+    assert cb.failures == 1
+    assert cb.is_closed
+    assert call_count == 1
+
+    assert cb.call(failing_call) is True
+    assert cb.failures == 2
+    assert cb.is_closed
+    assert call_count == 2
+
+    # Call 3 fails -> trips to OPEN
+    assert cb.call(failing_call) is True
+    assert cb.is_open
+    assert call_count == 3
+
+    # Next call fails fast without invoking the function
+    assert cb.call(failing_call) is True
+    assert cb.is_open
+    assert call_count == 3  # func was NOT called
+
+
+def test_half_open_recovery_cycle():
+    cb = CircuitBreaker(failure_threshold=2, recovery_timeout=5.0, fail_open=True)
+
+    def failing_call():
+        raise TimeoutError("Storage timeout")
+
+    with patch("time.time", return_value=100.0):
+        cb.call(failing_call)
+        cb.call(failing_call)
+        assert cb.is_open
+
+    # 4 seconds later: still within recovery timeout -> remains OPEN
+    with patch("time.time", return_value=104.0):
+        assert cb.call(failing_call) is True
+        assert cb.is_open
+
+    # 6 seconds later (> recovery_timeout): transitions to HALF_OPEN
+    # If the probe succeeds, circuit resets to CLOSED
+    with patch("time.time", return_value=106.0):
+        result = cb.call(lambda: "recovered")
+        assert result == "recovered"
+        assert cb.is_closed
+        assert cb.failures == 0
+
+
+def test_failed_probe_in_half_open_reopens_immediately():
+    cb = CircuitBreaker(failure_threshold=2, recovery_timeout=5.0)
+
+    def failing_call():
+        raise TimeoutError("Still failing")
+
+    with patch("time.time", return_value=100.0):
+        cb.call(failing_call)
+        cb.call(failing_call)
+        assert cb.is_open
+
+    # At t=106, probes half open and fails again -> trips directly to OPEN
+    with patch("time.time", return_value=106.0):
+        cb.call(failing_call)
+        assert cb.is_open

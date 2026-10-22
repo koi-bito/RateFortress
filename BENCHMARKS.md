@@ -31,27 +31,27 @@ Tested via `benchmarks/compare_window_boundary.py`:
 - **Traffic Pattern:** 5 requests sent at the tail of window 1 ($t=8.0$ to $9.9$), followed immediately by 5 requests at the start of window 2 ($t=10.1$ to $10.5$).
 - **Rolling Window Impact:** In the 2.5-second span ($t=8.0$ to $10.5$), 10 total requests arrived.
 
-### Side-by-Side Results
-
 ```
-Request  | Timestamp  | Fixed Window Counter | Sliding Window Log
------------------------------------------------------------------
-#1       | t=8.0s     | ALLOWED (✓)          | ALLOWED (✓)
-#2       | t=8.5s     | ALLOWED (✓)          | ALLOWED (✓)
-#3       | t=9.0s     | ALLOWED (✓)          | ALLOWED (✓)
-#4       | t=9.5s     | ALLOWED (✓)          | ALLOWED (✓)
-#5       | t=9.9s     | ALLOWED (✓)          | ALLOWED (✓)
-#6       | t=10.1s    | ALLOWED (✓) [BURST!] | BLOCKED (✗)
-#7       | t=10.2s    | ALLOWED (✓) [BURST!] | BLOCKED (✗)
-#8       | t=10.3s    | ALLOWED (✓) [BURST!] | BLOCKED (✗)
-#9       | t=10.4s    | ALLOWED (✓) [BURST!] | BLOCKED (✗)
-#10      | t=10.5s    | ALLOWED (✓) [BURST!] | BLOCKED (✗)
------------------------------------------------------------------
 Outcome:
 - Fixed Window Counter Allowed : 10 / 10 requests (2x Limit Spike Leak)
 - Sliding Window Log Allowed   :  5 / 10 requests (Strict Rate Preserved)
 ```
 
-### Analysis & Takeaway
-1. **Fixed Window Counter** suffers from boundary vulnerability: traffic clustered around window boundaries resets the quota early, potentially permitting up to **$2 \times \text{limit}$** in a rolling duration equal to window length. However, its memory complexity is strictly $O(1)$ per user.
-2. **Sliding Window Log** completely eliminates boundary spikes by inspecting the continuous rolling interval $[t - \text{window}, t]$. However, storing individual 64-bit float timestamps in a `deque` requires $O(N)$ memory, which becomes prohibitive under high request limits ($100,000\text{ reqs/min} \approx 800\text{ KB/user}$).
+---
+
+## ⚡ Round 1.5: Middleware Integration & HTTP Burst Throttling (Day 31)
+
+Tested via `loadtests/manual_load_burst.py`:
+- **Target Endpoint:** `/api/test` (Configured Limit: 10 requests / 60 seconds, Token Bucket)
+- **Client Identity:** Anonymous IP (`203.0.113.195`)
+- **Total Requests Sent:** 30 sequential HTTP requests
+
+### Burst Response Progression
+
+| Request Range | Status Code | Remaining | Retry-After | Middleware Action |
+| :--- | :--- | :--- | :--- | :--- |
+| **#1 to #10** | **HTTP 200 OK** | 9 down to 0 | 0s (10th: 6s) | Allowed (Token consumed) |
+| **#11 to #30** | **HTTP 429 Too Many Requests** | 0 | 6s | **Throttled (Quota exhausted)** |
+
+- **Empirical Validation:** The transition from HTTP 200 to HTTP 429 occurred at **exact request #11**, verifying zero leak beyond the nominal quota of 10 requests.
+- **Header Integrity:** Blocks cleanly transmitted `Retry-After: 6` indicating the precise recovery duration for the Token Bucket to accumulate at least 1 unit of capacity.

@@ -14,14 +14,14 @@ A structured record of architectural decisions, DSA insights, failure modes, and
 
 ### Day 2 — The Five Core Algorithms
 - **Payments API vs. Search Autocomplete:**
-  - *Payments API:* **Token Bucket** or **Sliding Window Log**. Payments cannot tolerate boundary bursts that overwhelm banking settlement gateways, but users should never face silent drops; Token Bucket allows small bursts (e.g., retrying a transient failure) while strictly metering the steady-state refill rate.
+  - *Payments API:* **Token Bucket** or **Sliding Window Log**. Payments cannot tolerate boundary bursts that overwhelm banking settlement gateways, but users should never face silent drops; Token Bucket allows small bursts while strictly metering the steady-state refill rate.
   - *Search Autocomplete:* **Sliding Window Counter** or **Fixed Window Counter**. Search suggestions require ultra-low latency (<5ms) and high throughput. An approximation like Sliding Window Counter has $O(1)$ memory, negligible CPU overhead, and dropping a stray keystroke is acceptable compared to adding latency to query evaluation.
 
 ### Day 3 — DSA: Hashmaps, Deques & Circular Buffers
 - **Why `collections.deque` over `list`:** A standard Python `list` is a dynamic array. Popping an element from the front (`list.pop(0)`) requires shifting all remaining $n-1$ elements in memory, yielding $O(n)$ time complexity per eviction. For a sliding window log handling high request volume, $O(n)$ evictions destroy performance. `collections.deque` is implemented as a doubly linked block list, providing true $O(1)$ amortized `popleft()` and `append()`.
 
 ### Day 4 — DSA: Heaps & Consistent Hashing
-- **Min-Heaps vs. Sorted Lists:** A min-heap provides $O(\log n)$ insertion and $O(1)$ peek ($O(\log n)$ pop) for priority operations. Maintaining a sorted list requires $O(n)$ insertion time (or $O(n)$ shift after $O(\log n)$ binary search insertion). For dynamic priority queues (e.g., prioritizing enterprise tier API calls ahead of free tier requests during traffic spikes), a min-heap scales efficiently.
+- **Min-Heaps vs. Sorted Lists:** A min-heap provides $O(\log n)$ insertion and $O(1)$ peek ($O(\log n)$ pop) for priority operations. Maintaining a sorted list requires $O(n)$ insertion time. For dynamic priority queues, a min-heap scales efficiently.
 
 ### Day 5 — Project Scoping & Manual Simulation
 - **Algorithm Differences Under Boundary Bursts:** Simulating 5 requests / 10s window at boundary $t=9, 10$: Fixed Window allows 5 requests at $t=9$ and another 5 at $t=10$ (10 requests in 2 seconds = 2x limit spike). Sliding Window Log and Sliding Window Counter both detect the rolling 10-second footprint and reject the boundary burst.
@@ -31,73 +31,58 @@ A structured record of architectural decisions, DSA insights, failure modes, and
 ## 📅 Week 1 — Environment Setup & Project Scaffold (Days 6–10)
 
 ### Day 6 — Modular Architecture Separation
-- **Why separate `algorithms/`, `middleware/`, and `api/`:** Clean separation of concerns allows:
-  1. Testing pure algorithmic logic in isolation without spinning up HTTP test clients or ASGI event loops.
-  2. Pluggability: The same rate limiter algorithm can be embedded in FastAPI middleware, a gRPC interceptor, a Celery worker, or an AWS Lambda authorizer without rewriting business logic.
-  3. Swappable storage engines (In-Memory, Redis, DynamoDB) without changing the rate limiting interface.
+- **Why separate `algorithms/`, `middleware/`, and `api/`:** Clean separation of concerns allows testing pure algorithmic logic in isolation, swappable storage engines, and embedding limiters into any ASGI/gRPC middleware without rewriting business logic.
 
 ### Day 7 — Commit Message Conventions
-- **Standard Convention Adopted:**
-  - `feat:` New algorithm, middleware, or system feature
-  - `test:` Unit, integration, or benchmark tests
-  - `perf:` Optimization or performance improvement
-  - `refactor:` Code restructuring without behavior change
-  - `docs:` Documentation, README, or engineering log updates
-  - `fix:` Bug fix or edge-case correction
-  - `ci:` Build, tooling, or workflow updates
+- **Standard Convention Adopted:** `feat:`, `test:`, `perf:`, `refactor:`, `docs:`, `fix:`, `ci:`.
 
 ### Day 8 — Test-Driven Development (TDD)
-- **Why Write Tests First:** Writing tests before implementation establishes clear boundary conditions (e.g., what happens at limit - 1, limit, and limit + 1; exact window resets). Skipping early testing leads to subtle off-by-one errors and race conditions that are exponentially harder to debug once wrapped inside asynchronous HTTP middleware.
+- **Why Write Tests First:** Establishes clear boundary conditions (limit - 1, limit, limit + 1, rollover resets) before asynchronous HTTP concurrency complicates debugging.
 
 ### Day 9 — Unified Benchmark Harness
-- **Why a Single Benchmark Harness:** To ensure unbiased, apples-to-apples performance comparisons. Keeping constant user distribution, request loops, timing precision (`time.perf_counter`), and system metrics isolates algorithmic complexity and data structure overhead as the sole independent variables.
+- **Why a Single Benchmark Harness:** Ensures unbiased, apples-to-apples comparisons by isolating algorithmic data structures as the sole independent variable.
 
 ### Day 10 — Week 1 Review
-- **Reflection:** Scaffolded core directory structure, configured isolated Python virtual environment, integrated pytest, established baseline benchmark harness, and validated clean code formatting with Ruff and Black. Ready to implement pure algorithms starting with Fixed Window Counter.
+- **Reflection:** Scaffolded core directory structure, configured isolated Python virtual environment, integrated pytest, established baseline benchmark harness, and validated clean code formatting.
 
 ---
 
 ## 📅 Week 2 — Fixed Window & Sliding Window Log (Days 11–15)
 
 ### Day 11 — Fixed Window Counter Mechanics
-- **The Boundary Burst Problem:** Fixed Window evaluates `current_window = int(now // window_seconds)`. If window size is 60s and limit is 100 requests, a client can send 100 requests at $t=59\text{s}$ (window 0) and another 100 requests at $t=60\text{s}$ (window 1). The service experiences 200 requests in a 2-second interval — twice the intended peak load.
+- **The Boundary Burst Problem:** Fixed Window evaluates `current_window = int(now // window_seconds)`. Traffic clustered at window boundaries allows up to $2 \times \text{limit}$ in a rolling window of length $T$.
 - **Complexity:** $O(1)$ time, $O(1)$ memory per client.
 
 ### Day 12 — Testing & Benchmarking Fixed Window
-- **Test Findings:** Validated clean reset when window rollover occurs (`sleep(window_seconds + delta)`), independent quotas per user ID, and remaining count decrements.
 - **Throughput:** Achieved **~2.82M req/s** in in-memory pure Python.
 
 ### Day 13 — Sliding Window Log Mechanics
-- **Precision with Deques:** Sliding Window Log records every individual timestamp in a `collections.deque`. Upon every request, timestamps $\le \text{now} - \text{window}$ are popped from the left.
-- **Exact Enforcement:** Because the rolling window $[now - window, now]$ is continuously updated, boundary spikes are impossible.
-- **Tradeoff:** Storing every timestamp consumes $O(N)$ memory. At $10^5$ requests per minute across $10^6$ active users, memory footprint would balloon into tens of gigabytes in Redis.
+- **Precision with Deques:** Sliding Window Log records timestamps in a `collections.deque`. Timestamps $\le \text{now} - \text{window}$ are popped from the left.
+- **Tradeoff:** Storing every timestamp consumes $O(N)$ memory per active client.
 
 ### Day 14 — Testing & Benchmarking Sliding Window Log
-- **Test Findings:** Verified that slots open gradually as individual timestamps exit the rolling window, rather than releasing all quota in a single abrupt reset.
 - **Throughput:** Achieved **~3.47M req/s** in in-memory pure Python.
 
 ### Day 15 — Empirical Comparison (Fixed Window vs. Sliding Window Log)
-- **Script Evidence:** `benchmarks/compare_window_boundary.py` verified that with limit=5/10s, sending 5 requests at $t=8.0..9.9\text{s}$ and 5 requests at $t=10.1..10.5\text{s}$ allowed all 10 in Fixed Window Counter (100% leak) while Sliding Window Log blocked requests 6 through 10.
-- **Production Choice:** For a payments API, Sliding Window Log (or Token Bucket) is mandatory because downstream bank gateways cannot survive 2x load spikes. For internal rate limiting of high-throughput read endpoints where occasional bursts are benign, Fixed Window Counter is vastly more memory-efficient.
+- **Script Evidence:** `benchmarks/compare_window_boundary.py` verified that with limit=5/10s, Fixed Window leaked 10/10 requests while Sliding Window Log blocked requests 6 through 10.
 
 ---
 
 ## 📅 Week 3 — Sliding Window Counter, Token Bucket & Leaky Bucket (Days 16–21)
 
 ### Day 16 — Sliding Window Counter Mechanics
-- **Weighted Approximation Math:** The formula is $\text{Estimated} = (\text{Previous Window Count} \times \text{Weight of Previous}) + \text{Current Window Count}$, where $\text{Weight of Previous} = 1 - (\text{Elapsed in Current Window} / \text{Window Duration})$.
-- **Why It Beats Both Predecessors:** Provides boundary smoothing without storing timestamps. Memory is strictly $O(1)$ (only 2 integer counters per client), yet boundary burst error is typically $<5\%$ in production traffic.
+- **Weighted Approximation Math:** $\text{Estimated} = (\text{Previous Count} \times \text{Weight of Previous}) + \text{Current Count}$, where $\text{Weight of Previous} = 1 - (\text{Elapsed} / \text{Window})$.
+- **Why It Beats Both Predecessors:** Provides boundary smoothing with strictly $O(1)$ memory (only 2 counters per client).
 
 ### Day 17 — Token Bucket Mechanics
-- **Lazy Refill Calculation:** Rather than maintaining background threads or cron timers constantly refilling buckets, tokens are refilled lazily on each request: $\Delta t = \text{now} - \text{last\_refill}$, $\text{new\_tokens} = \min(\text{capacity}, \text{tokens} + \Delta t \times \text{refill\_rate})$.
-- **Why Stripe & GitHub Choose Token Bucket:** Real-world traffic is inherently bursty. Token Bucket accommodates legitimate short-term spikes up to `capacity` while guaranteeing long-term consumption never exceeds `refill_rate`.
+- **Lazy Refill Calculation:** Tokens are refilled lazily on each request: $\Delta t = \text{now} - \text{last\_refill}$, $\text{new\_tokens} = \min(\text{capacity}, \text{tokens} + \Delta t \times \text{refill\_rate})$.
+- **Industry Standard:** Accommodates legitimate short-term spikes up to `capacity` while guaranteeing long-term consumption never exceeds `refill_rate`.
 
 ### Day 18 — Leaky Bucket Mechanics
-- **Constant Egress vs. Token Bucket:** Token Bucket allows bursts to pass immediately through to the backend as long as tokens exist. Leaky Bucket queues requests and leaks them at a fixed, uniform rate.
-- **User Experience Contrast:** For an API consumer, Token Bucket delivers lower latency during bursts (requests execute immediately). Leaky Bucket introduces queueing delay (or drops if queue is full), but provides an absolutely flat downstream request rate, protecting fragile dependencies like legacy databases.
+- **Constant Egress:** Requests enter a queue and leak out at a strictly uniform rate, completely eliminating downstream spikes.
 
 ### Day 19 — Full 5-Algorithm Benchmark Suite
-- **Throughput Profile (Pure Python, 10,000 requests, 100 users):**
+- **Throughput Profile (Pure Python, 10k requests, 100 users):**
   - Sliding Window Log: **~3.47M req/s**
   - Fixed Window Counter: **~2.82M req/s**
   - Leaky Bucket: **~2.58M req/s**
@@ -105,40 +90,55 @@ A structured record of architectural decisions, DSA insights, failure modes, and
   - Token Bucket: **~2.07M req/s**
 
 ### Day 20 — DSA Practice Day: Core Patterns
-- **Sliding Window Maximum (LeetCode #239):** Monotonic deque pattern. Elements smaller than the incoming element are popped from the back; expired indices are popped from the front. Identical to timestamp eviction in Sliding Window Log.
-- **Design Hit Counter (LeetCode #362):** Circular buffer / fixed bucket pattern. Modulo arithmetic `time % 300` mirrors the fixed and sliding window counter index calculations.
-- **Kth Largest Element in a Stream (LeetCode #703):** Min-heap pattern of size $k$. Incoming elements maintain the top $k$ items with $O(\log k)$ push-pop.
+- **LeetCode Patterns:** Monotonic deque (#239), Circular buffer (#362), and Min-heap stream (#703).
 
 ### Day 21 — Week 3 Review & Milestone Complete
-- **Status:** All 5 foundation algorithms are fully implemented, strictly typed, formatted with Black/Ruff, verified with 27 passing unit tests, and comparatively benchmarked.
+- **Status:** All 5 foundation algorithms fully implemented and benchmarked.
 
 ---
 
 ## 📅 Week 4 — FastAPI Middleware Layer I (Days 22–27)
 
 ### Day 22 — ASGI Architecture & Uvicorn
-- **What is ASGI:** Asynchronous Server Gateway Interface is the modern Python asynchronous standard (successor to synchronous WSGI like Gunicorn/Flask). It standardizes how asynchronous Python applications handle HTTP, HTTP/2, and WebSockets over `async`/`await` event loops.
-- **Why FastAPI Requires Uvicorn:** FastAPI is solely an application framework responsible for request routing, schema serialization (Pydantic), and dependency injection. It does not contain an HTTP socket parser or TCP network listener. Uvicorn is the high-performance ASGI server (built on `uvloop` and `httptools`) that binds to OS network sockets, parses raw HTTP bytes, and invokes FastAPI's ASGI interface.
+- **What is ASGI:** Asynchronous Server Gateway Interface is the modern Python asynchronous standard. Uvicorn manages raw OS network sockets and event loops, invoking FastAPI's ASGI interface.
 
 ### Day 23 — Middleware Dispatch Pipeline
-- **Request Interception:** `RateLimitMiddleware` inherits from Starlette's `BaseHTTPMiddleware`. By overriding `dispatch(request, call_next)`, rate limit evaluation happens *before* request parameters are deserialized or database transactions are opened. When limits are exceeded, an early HTTP 429 response is returned immediately, shedding server load with near-zero resource expenditure.
+- **Request Interception:** `RateLimitMiddleware` intercepts requests before routing or database execution, returning early HTTP 429 responses.
 
 ### Day 24 — Rate Limit Headers on Every Response
-- **Why Send Headers on 200 OK:** Professional APIs (Stripe, GitHub, OpenAI) return `X-RateLimit-Limit`, `X-RateLimit-Remaining`, and `Retry-After` on *every* response, not just when a client gets blocked (429).
-  - *Proactive Throttling:* Client SDKs can monitor `X-RateLimit-Remaining` and voluntarily throttle or queue their own requests as the remaining quota approaches zero, avoiding unexpected exceptions.
-  - *Debugging Visibility:* API consumers can immediately see their consumption without guessing how close they are to the threshold.
+- **Client Transparency:** Returns `X-RateLimit-Limit`, `X-RateLimit-Remaining`, and `Retry-After` on every response, enabling client SDKs to proactively throttle before hitting errors.
 
 ### Day 25 — Per-Endpoint Quota Isolation
-- **Granular Throttling:** Different endpoints have radically different resource costs. While a lightweight health check `/health` can support 200 req/min, a resource-intensive analytics or AI endpoint `/api/expensive-endpoint` must be clamped to 5 or 10 req/min. Isolating quotas by path ensures an attacker spamming an expensive endpoint does not exhaust the user's quota for unrelated lightweight endpoints.
+- **Granular Throttling:** Strict limits on expensive operations (`/api/expensive-endpoint`) without penalizing lightweight read endpoints.
 
 ### Day 26 — API Key Security & Tier Multipliers
-- **Why Headers over Query Parameters:** API keys must *never* be accepted in URL query parameters (e.g. `?api_key=xyz`):
-  1. URLs are logged in plain text in browser histories, proxy logs, load balancer access logs (Nginx/Cloudflare), and application APM traces.
-  2. The HTTP `Referer` header automatically leaks query parameters to external third-party domains when clicking links.
-  3. Putting keys in headers (`X-API-Key` or `Authorization: Bearer`) ensures sensitive credentials remain shielded from standard access logs and referrers.
-- **Tier-Based Multipliers:** Enabled dynamic multiplier resolution (`key_free_abc` = 1x, `key_paid_xyz` = 10x, `key_enterprise_999` = 50x), multiplying nominal endpoint limits accordingly.
+- **Why Headers over Query Parameters:** Headers prevent credentials from being leaked to browser histories, reverse proxy logs, and `Referer` headers. Tier multipliers: Free = 1x, Paid = 10x, Enterprise = 50x.
 
 ### Day 27 — DSA Practice: Hashing & Design Patterns
-- **LRU Cache (LeetCode #146):** Hashmap + Doubly Linked List. How it applies to RateFortress: If millions of distinct IP addresses hit the gateway, storing unbounded per-IP state in memory leads to out-of-memory (OOM) crashes. An LRU Cache eviction policy caps the active tracking set to the top $K$ most recent users.
-- **Insert Delete GetRandom O(1) (LeetCode #381):** Hashmap (value $\to$ index) + Dynamic Array. Allows $O(1)$ deletes by swapping the target element with the last element in the array before popping.
-- **Design Twitter (LeetCode #355):** Combines Hashmaps for follow graphs and Min/Max-Heaps for $k$-way merge of user timelines. Directly mirrors our Week 5 tiered priority queue architecture.
+- **Patterns:** LRU Cache (#146), Insert Delete GetRandom O(1) (#381), Design Twitter (#355).
+
+---
+
+## 📅 Week 5 — FastAPI Middleware Layer II — Tiering, Resilience & Load Prep (Days 28–33)
+
+### Day 28 — Tiered Rate Limits with Priority Queues
+- **Min-Heap Scheduling:** Implemented `PriorityRequestQueue` using `heapq` with tie-breaking counters. Enterprise (0) and Paid (1) requests are dequeued and serviced before Free (2) or Anonymous (3) requests.
+- **Production Placement:** In production, request prioritization belongs at the API Gateway or ingress reverse-proxy layer (e.g. Envoy, Nginx, or an external SQS/Redis queue). Placing queues inside individual web worker processes leads to fragmented, desynchronized queues across multiple server nodes and risks dropped requests on worker restart.
+
+### Day 29 — Endpoint Trie for Prefix Matching
+- **Why Trie Beats String Scans:** Scanning an array of $N$ routes with regex or string comparisons incurs $O(N \times M)$ overhead per request. An `EndpointTrie` executes in $O(K)$ time where $K$ is the number of path segments (usually 2–5), completely independent of how many hundreds of route rules are registered.
+- **Hierarchical Inheritance:** Parent rules (e.g., `/api/admin`) automatically govern nested routes (`/api/admin/users`, `/api/admin/settings`) unless explicitly overridden by a more specific child rule.
+
+### Day 30 — Full Middleware Integration Testing
+- **End-to-End Verification:** `tests/test_middleware_integration.py` confirmed trie prefix inheritance, enterprise 50x quota scaling, and circuit breaker fail-open behavior. All 46 tests pass across the suite.
+
+### Day 31 — Live Request Burst Throttling
+- **Empirical Demonstration:** `loadtests/manual_load_burst.py` fired 30 sequential requests at `/api/test` (limit=10). Requests #1–#10 succeeded with decreasing `X-RateLimit-Remaining` counts (9 down to 0). Request #11 triggered the first HTTP 429, and requests #11–#30 were all throttled with `Retry-After: 6`.
+
+### Day 32 — Circuit Breaker & Resilience Policies
+- **Fail-Open vs. Fail-Closed:**
+  - *RateFortress Policy (Fail-Open):* If the storage backend (Redis) or rate limiter raises exceptions, the circuit breaker trips to `open` and allows incoming traffic to pass through. For customer-facing APIs, maximizing availability and avoiding false-positive outages takes precedence over temporary unthrottled access during an infrastructure incident.
+  - *Contrast with Payments (Fail-Closed):* For payment gateways or banking settlement systems, failing closed is non-negotiable. An unthrottled payment service could execute duplicate charges, overdraft accounts, or allow fraudulent charge loops that inflict direct financial damage.
+
+### Day 33 — Week 5 Review & Completion
+- **Milestone Achieved:** The complete ASGI middleware pipeline is finished, hardened with trie matching, priority queuing, and fail-open resilience. Ready for Week 6: Distributed Redis Backend and Lua script atomicity.

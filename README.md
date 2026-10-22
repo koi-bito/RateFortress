@@ -39,8 +39,8 @@ ratefortress/
 
 ## 🚦 Status & Milestones
 
-- **Current Status:** Week 4 — FastAPI Middleware Layer I Complete (HTTP 429, Headers, Tiers & Key Extractors) ✅
-- **Next Milestone:** Week 5 — FastAPI Middleware Layer II (Tiering, Priority Queues, Trie Route Matching & Fail-Open Resilience)
+- **Current Status:** Week 5 — FastAPI Middleware Layer II Complete (Priority Queues, Trie Routing & Circuit Breaker) ✅
+- **Next Milestone:** Week 6 — Distributed Redis Backend I (Docker Setup, Redis Client & Atomic Lua Scripts)
 
 ---
 
