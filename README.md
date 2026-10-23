@@ -39,8 +39,8 @@ ratefortress/
 
 ## 🚦 Status & Milestones
 
-- **Current Status:** Week 5 — FastAPI Middleware Layer II Complete (Priority Queues, Trie Routing & Circuit Breaker) ✅
-- **Next Milestone:** Week 6 — Distributed Redis Backend I (Docker Setup, Redis Client & Atomic Lua Scripts)
+- **Current Status:** Week 6 — Distributed Redis Backend I Complete (RedisFixedWindow, RedisSlidingWindowCounter, RedisSlidingWindowLog & Multi-Instance Synchronization) ✅
+- **Next Milestone:** Week 7 — Redis Backend II — Lua Scripts, Token/Leaky Bucket Atomicity & Race Condition Testing
 
 ---
 

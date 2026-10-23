@@ -142,3 +142,38 @@ A structured record of architectural decisions, DSA insights, failure modes, and
 
 ### Day 33 — Week 5 Review & Completion
 - **Milestone Achieved:** The complete ASGI middleware pipeline is finished, hardened with trie matching, priority queuing, and fail-open resilience. Ready for Week 6: Distributed Redis Backend and Lua script atomicity.
+
+---
+
+## 📅 Week 6 — Redis Backend I (Days 34–39)
+
+### Day 34 — Why In-Memory Breaks in Production & Redis Setup
+- **The Split-Brain In-Memory Dilemma:** When an API scales horizontally across $M$ server instances behind a load balancer (e.g., AWS ALB, Nginx), each process running with an in-memory `defaultdict` maintains an isolated, private counter. If a client has a rate limit of 10 req/min, an abuser can round-robin requests across 5 instances and successfully execute $5 \times 10 = 50$ requests per minute. To enforce a true global quota across an elastic cluster, state must be externalized to a shared, high-throughput in-memory data store like Redis.
+- **Verification:** Verified Redis connectivity and multi-client key synchronization with `scripts/test_redis_connection.py`.
+
+### Day 35 — Redis Fixed Window & The Danger of GET-then-SET
+- **Atomic `INCR` vs. `GET`-then-`SET` Race Condition:** If two concurrent requests arrive simultaneously at Server A and Server B when the counter is at 4 (limit=5):
+  1. Server A executes `GET key` $\to$ receives `4`.
+  2. Server B executes `GET key` $\to$ receives `4`.
+  3. Server A checks `4 < 5` (allowed) and executes `SET key 5`.
+  4. Server B checks `4 < 5` (allowed) and executes `SET key 5`.
+  - Both requests were permitted, and the actual total requests served is now 6 (violating the limit of 5).
+  - With Redis `INCR`, the operation is executed in a single atomic cycle inside Redis's single-threaded event loop. Server A's `INCR` returns `5` (allowed); Server B's `INCR` returns `6` (immediately blocked).
+
+### Day 36 — Redis Sliding Window Counter & Distributed Tradeoffs
+- **Throughput vs. Distributed Correctness:** In-memory execution achieves ~2.1M req/s, whereas Redis pipeline execution achieves ~13.9k req/s. While in-memory is 150x faster on a raw CPU microbenchmark, 13.9k req/s is still ~7x higher than the concurrency ceiling of a typical ASGI Python application worker (~2k req/s). In distributed production systems, correctness under horizontal scale always trumps localized microbenchmark speed.
+- **TTL Strategy:** Expiring the window key after $2 \times \text{window\_seconds} + 2$ ensures the counter lives long enough to serve as the `previous_window` for the subsequent cycle while guaranteeing zero permanent memory leaks in Redis.
+
+### Day 37 — Sliding Window Log via Redis Sorted Sets (ZSET)
+- **Why Sorted Sets Beat Plain Lists:**
+  1. *Score as Timestamp:* Using float Unix epoch timestamps as the sorted set score allows pruning all timestamps older than the sliding window boundary with a single command: `ZREMRANGEBYSCORE key 0 (now - window)`. This executes in $O(\log N + M)$ time.
+  2. *Constant-Time Cardinality:* `ZCARD key` returns the exact number of active requests in $O(1)$ time.
+  3. *Exact Header Calculation:* Inspecting the oldest entry with `ZRANGE key 0 0 WITHSCORES` in $O(\log N)$ gives the exact timestamp needed to calculate `Retry-After = oldest + window - now`.
+  4. With a plain Redis `LIST`, timestamps cannot be ordered or range-pruned by value without scanning the entire list from client space ($O(N)$ network transfer).
+
+### Day 38 — Test Isolation & Redis Database Indexing
+- **Why Dedicated DB Indexes Matter:** Redis supports logical database indexes (DB 0 to 15). Tests run `FLUSHDB` before and after every test function to guarantee a clean slate. If tests ran on DB 0 (the development/staging database), running the test suite would instantly purge developer cache keys, active session tokens, and mock data. Isolating test execution strictly to DB 1 prevents catastrophic test pollution.
+
+### Day 39 — DSA Practice: Tries vs. Hashmaps for Routing
+- **Trie Time Complexity:** Both insert and search in a segment-based Trie take $O(K)$ time, where $K$ is the number of path segments (typically 2 to 5 in REST APIs), completely independent of the total number of registered routes ($N$).
+- **Why Tries Beat Hashmaps for Prefixes:** With a hashmap, prefix inheritance requires $O(K)$ lookups slicing every prefix substring or iterating through all $N$ keys. A Trie naturally stops at the deepest matching branch node with a rule, supporting hierarchical wildcard inheritance (`/api/admin/*`) with zero backtracking.
