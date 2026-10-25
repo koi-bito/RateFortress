@@ -15,6 +15,11 @@ from starlette.responses import JSONResponse, Response
 
 from src.algorithms.fixed_window import FixedWindowCounter
 from src.algorithms.leaky_bucket import LeakyBucket
+from src.algorithms.redis_fixed_window import RedisFixedWindow
+from src.algorithms.redis_leaky_bucket import RedisLeakyBucket
+from src.algorithms.redis_sliding_window_counter import RedisSlidingWindowCounter
+from src.algorithms.redis_sliding_window_log import RedisSlidingWindowLog
+from src.algorithms.redis_token_bucket import RedisTokenBucket
 from src.algorithms.sliding_window_counter import SlidingWindowCounter
 from src.algorithms.sliding_window_log import SlidingWindowLog
 from src.algorithms.token_bucket import TokenBucket
@@ -32,6 +37,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         rules: Mapping from route paths to EndpointRule configurations.
         api_keys: Registered API keys with tier multipliers.
         circuit_breaker: CircuitBreaker instance for fail-open resilience.
+        redis_client: Optional Redis client for distributed state synchronization.
     """
 
     def __init__(
@@ -41,10 +47,14 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         rules: dict[str, EndpointRule] | None = None,
         api_keys: dict[str, dict] | None = None,
         circuit_breaker: CircuitBreaker | None = None,
+        redis_client: Any | None = None,
     ):
         super().__init__(app)
-        self.default_limiter = default_limiter or TokenBucket(
-            capacity=100, refill_rate_per_sec=10.0
+        self.redis_client = redis_client
+        self.default_limiter = default_limiter or (
+            RedisTokenBucket(redis_client, capacity=100, refill_rate_per_sec=10.0)
+            if redis_client
+            else TokenBucket(capacity=100, refill_rate_per_sec=10.0)
         )
         self.api_keys = api_keys or API_KEYS
         self.circuit_breaker = circuit_breaker or CircuitBreaker(
@@ -92,32 +102,80 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         cache_key = f"{path}:{rule.algorithm}:{effective_limit}:{rule.window_seconds}"
 
         if cache_key not in self._limiter_cache:
-            if rule.algorithm == "fixed_window":
-                limiter = FixedWindowCounter(
-                    limit=effective_limit, window_seconds=rule.window_seconds
-                )
-            elif rule.algorithm == "sliding_window_log":
-                limiter = SlidingWindowLog(
-                    limit=effective_limit, window_seconds=rule.window_seconds
-                )
-            elif rule.algorithm == "sliding_window_counter":
-                limiter = SlidingWindowCounter(
-                    limit=effective_limit, window_seconds=rule.window_seconds
-                )
-            elif rule.algorithm == "leaky_bucket":
-                leak_rate = effective_limit / rule.window_seconds
-                limiter = LeakyBucket(
-                    capacity=effective_limit, leak_rate_per_sec=leak_rate
-                )
-            else:  # default token_bucket
-                refill_rate = effective_limit / rule.window_seconds
-                limiter = TokenBucket(
-                    capacity=effective_limit, refill_rate_per_sec=refill_rate
-                )
+            if self.redis_client:
+                if rule.algorithm == "fixed_window":
+                    limiter = RedisFixedWindow(
+                        self.redis_client,
+                        limit=effective_limit,
+                        window_seconds=rule.window_seconds,
+                    )
+                elif rule.algorithm == "sliding_window_log":
+                    limiter = RedisSlidingWindowLog(
+                        self.redis_client,
+                        limit=effective_limit,
+                        window_seconds=rule.window_seconds,
+                    )
+                elif rule.algorithm == "sliding_window_counter":
+                    limiter = RedisSlidingWindowCounter(
+                        self.redis_client,
+                        limit=effective_limit,
+                        window_seconds=rule.window_seconds,
+                    )
+                elif rule.algorithm == "leaky_bucket":
+                    leak_rate = effective_limit / rule.window_seconds
+                    limiter = RedisLeakyBucket(
+                        self.redis_client,
+                        capacity=effective_limit,
+                        leak_rate_per_sec=leak_rate,
+                    )
+                else:  # default token_bucket
+                    refill_rate = effective_limit / rule.window_seconds
+                    limiter = RedisTokenBucket(
+                        self.redis_client,
+                        capacity=effective_limit,
+                        refill_rate_per_sec=refill_rate,
+                    )
+            else:
+                if rule.algorithm == "fixed_window":
+                    limiter = FixedWindowCounter(
+                        limit=effective_limit, window_seconds=rule.window_seconds
+                    )
+                elif rule.algorithm == "sliding_window_log":
+                    limiter = SlidingWindowLog(
+                        limit=effective_limit, window_seconds=rule.window_seconds
+                    )
+                elif rule.algorithm == "sliding_window_counter":
+                    limiter = SlidingWindowCounter(
+                        limit=effective_limit, window_seconds=rule.window_seconds
+                    )
+                elif rule.algorithm == "leaky_bucket":
+                    leak_rate = effective_limit / rule.window_seconds
+                    limiter = LeakyBucket(
+                        capacity=effective_limit, leak_rate_per_sec=leak_rate
+                    )
+                else:  # default token_bucket
+                    refill_rate = effective_limit / rule.window_seconds
+                    limiter = TokenBucket(
+                        capacity=effective_limit, refill_rate_per_sec=refill_rate
+                    )
 
             self._limiter_cache[cache_key] = limiter
 
         return self._limiter_cache[cache_key], effective_limit
+
+    def _safe_remaining(self, limiter: Any, client_id: str, default: int) -> int:
+        if hasattr(limiter, "remaining"):
+            return limiter.remaining(client_id)
+        if hasattr(limiter, "get_remaining"):
+            return limiter.get_remaining(client_id)
+        return default
+
+    def _safe_retry_after(self, limiter: Any, client_id: str) -> int:
+        if hasattr(limiter, "retry_after"):
+            return limiter.retry_after(client_id)
+        if hasattr(limiter, "get_retry_after"):
+            return limiter.get_retry_after(client_id)
+        return 1
 
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
         client_id, tier, multiplier = self._get_client_identity(request)
@@ -132,7 +190,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
         if not is_allowed:
             remaining = 0
-            retry_after = limiter.get_retry_after(client_id)
+            retry_after = self._safe_retry_after(limiter, client_id)
             headers = {
                 "X-RateLimit-Limit": str(nominal_limit),
                 "X-RateLimit-Remaining": str(remaining),
@@ -153,8 +211,8 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
         # Attach rate limit headers to all successful/downstream responses
         try:
-            remaining = limiter.get_remaining(client_id)
-            retry_after = limiter.get_retry_after(client_id)
+            remaining = self._safe_remaining(limiter, client_id, nominal_limit)
+            retry_after = self._safe_retry_after(limiter, client_id)
         except Exception:  # noqa: BLE001
             remaining = nominal_limit
             retry_after = 0

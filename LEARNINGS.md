@@ -177,3 +177,30 @@ A structured record of architectural decisions, DSA insights, failure modes, and
 ### Day 39 — DSA Practice: Tries vs. Hashmaps for Routing
 - **Trie Time Complexity:** Both insert and search in a segment-based Trie take $O(K)$ time, where $K$ is the number of path segments (typically 2 to 5 in REST APIs), completely independent of the total number of registered routes ($N$).
 - **Why Tries Beat Hashmaps for Prefixes:** With a hashmap, prefix inheritance requires $O(K)$ lookups slicing every prefix substring or iterating through all $N$ keys. A Trie naturally stops at the deepest matching branch node with a rule, supporting hierarchical wildcard inheritance (`/api/admin/*`) with zero backtracking.
+
+---
+
+## 📅 Week 7 — Redis Backend II — Lua Scripts, Atomicity & Eviction (Days 40–45)
+
+### Day 40 — Token Bucket via Redis + Lua Scripts
+- **Why Simple Commands Fail for Token Bucket:** Unlike Fixed Window Counter which can rely on a single atomic `INCR`, Token Bucket must track both floating-point `tokens` and the timestamp `last_refill`. Performing `HMGET`, calculating the elapsed refill in application memory, and writing back with `HMSET` creates a classic Time-Of-Check to Time-Of-Use (TOCTOU) race condition where concurrent requests overwrite each other's decrements.
+- **Lua Execution Semantics:** Redis guarantees that Lua scripts execute atomically within the server's single-threaded event loop. By registering `redis_token_bucket.lua`, the entire read-refill-check-decrement-write-expire pipeline executes as a single isolated primitive, eliminating interleaving without distributed locks.
+
+### Day 41 — Leaky Bucket via Redis + Lua Scripts
+- **Discrete Leakage & Constant Egress:** Implemented `redis_leaky_bucket.lua` using a Redis Hash (`queue_size`, `last_leak`). Elapsed time since `last_leak` calculates integer request leakage, and remaining capacity determines whether new requests are queued.
+- **Behavioral Contrast Confirmed on Redis:** Under identical sudden traffic bursts, Token Bucket instantly admits bursts up to `capacity`, while Leaky Bucket strictly limits the queue fill and forces a constant egress drain rate, preventing downstream saturation.
+
+### Day 42 — Atomicity Deep Dive & Race Condition Elimination
+- **Exposing the Day 37 Check-Then-Insert Race Condition:** In our Day 37 Redis Sliding Window Log, `zcard(key)` and `zadd(key, ...)` were executed as two separate calls. Under a 50-thread concurrent barrage with `limit=10`, multiple threads inspected `ZCARD` before any thread wrote to the sorted set, admitting 18 to 24 requests instead of the strict quota of 10.
+- **Atomic Lua Remediation:** Replaced the multi-call pipeline with `redis_sliding_window_log.lua`, encapsulating `ZREMRANGEBYSCORE`, `ZCARD`, `ZADD`, and `EXPIRE` into a single script. Verified with `tests/test_redis_concurrency.py`: across repeated concurrent runs, exactly 10 requests were permitted and 40 blocked (0% over-admission).
+
+### Day 43 — Distributed Multi-Instance Validation
+- **Cluster Quota Enforcement:** Validated multi-instance behavior with `tests/test_distributed_multi_instance.py`. Two independent FastAPI server instances alternating requests under a shared limit of 10 successfully served 5 requests each. The 11th request was blocked with HTTP 429 across both instances, proving that rate limiting is enforced globally rather than per-node.
+- **Preventing Cluster Multiplication:** Without externalized Redis state, scaling from 1 to $M$ instances multiplies client quotas by $M$. Externalizing state to Redis guarantees the nominal limit holds regardless of how many horizontal worker nodes are provisioned.
+
+### Day 44 — Key Eviction & TTL Strategy
+- **Auditing Immortal Keys:** Confirmed that 100% of Redis keys across all 5 algorithms establish an explicit TTL upon creation/access. Fixed window keys expire in `window_seconds + 1`, sliding window counter in `2 * window_seconds + 2`, and bucket hashes in `max(3600, 2 * refill/drain time)`.
+- **Why `volatile-lru` Beats `allkeys-lru`:** In production clusters shared between caching and rate limiting, `allkeys-lru` risks evicting permanent configuration or auth metadata. Because RateFortress guarantees all rate-limiting keys have active TTLs, `volatile-lru` safely recycles stale rate limiter keys under memory pressure without touching non-volatile data.
+
+### Day 45 — Week 6–7 Review & Milestone Complete
+- **Milestone Achieved:** Distributed Redis Backend complete! All 5 rate limiting algorithms now run with full multi-instance synchronization, atomic Lua execution, zero race conditions under concurrent load, 100% key TTL coverage, and comprehensive integration testing. Ready for Week 8: Load Testing with Locust.

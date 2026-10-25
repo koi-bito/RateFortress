@@ -39,8 +39,8 @@ ratefortress/
 
 ## 🚦 Status & Milestones
 
-- **Current Status:** Week 6 — Distributed Redis Backend I Complete (RedisFixedWindow, RedisSlidingWindowCounter, RedisSlidingWindowLog & Multi-Instance Synchronization) ✅
-- **Next Milestone:** Week 7 — Redis Backend II — Lua Scripts, Token/Leaky Bucket Atomicity & Race Condition Testing
+- **Current Status:** Week 7 — Distributed Redis Backend Complete (All 5 Algorithms, Atomic Lua Scripts, Race Condition Elimination, Multi-Instance Synchronization & 100% Key TTL Safety) ✅
+- **Next Milestone:** Week 8 — Load Testing with Locust (100–500 concurrent users, throughput ceilings & p95/p99 latency analysis)
 
 ---
 

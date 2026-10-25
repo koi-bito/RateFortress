@@ -1,6 +1,6 @@
 """Benchmark harness for Redis-backed rate limiting algorithms.
 
-Compares in-memory pure Python vs Redis-backed algorithms.
+Compares in-memory pure Python vs distributed Redis-backed algorithms across all 5 implementations.
 """
 
 import os
@@ -12,11 +12,15 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.algorithms.fixed_window import FixedWindowCounter
+from src.algorithms.leaky_bucket import LeakyBucket
 from src.algorithms.redis_fixed_window import RedisFixedWindow
+from src.algorithms.redis_leaky_bucket import RedisLeakyBucket
 from src.algorithms.redis_sliding_window_counter import RedisSlidingWindowCounter
 from src.algorithms.redis_sliding_window_log import RedisSlidingWindowLog
+from src.algorithms.redis_token_bucket import RedisTokenBucket
 from src.algorithms.sliding_window_counter import SlidingWindowCounter
 from src.algorithms.sliding_window_log import SlidingWindowLog
+from src.algorithms.token_bucket import TokenBucket
 from src.storage.redis_client import get_redis_client
 
 
@@ -51,14 +55,25 @@ def main():
     redis_client = get_redis_client(db=2)
     redis_client.flushdb()
 
+    # Fixed Window
     py_fixed = FixedWindowCounter(limit=50, window_seconds=10)
     redis_fixed = RedisFixedWindow(redis_client, limit=50, window_seconds=10)
 
+    # Sliding Window Counter
     py_swc = SlidingWindowCounter(limit=50, window_seconds=10)
     redis_swc = RedisSlidingWindowCounter(redis_client, limit=50, window_seconds=10)
 
+    # Sliding Window Log
     py_swl = SlidingWindowLog(limit=50, window_seconds=10)
     redis_swl = RedisSlidingWindowLog(redis_client, limit=50, window_seconds=10)
+
+    # Token Bucket
+    py_tb = TokenBucket(capacity=50, refill_rate_per_sec=5.0)
+    redis_tb = RedisTokenBucket(redis_client, capacity=50, refill_rate_per_sec=5.0)
+
+    # Leaky Bucket
+    py_lb = LeakyBucket(capacity=50, leak_rate_per_sec=5.0)
+    redis_lb = RedisLeakyBucket(redis_client, capacity=50, leak_rate_per_sec=5.0)
 
     print("==================================================")
     print("      In-Memory vs Redis Rate Limiter Benchmarks  ")
@@ -70,19 +85,23 @@ def main():
         (py_swc, "Pure Python Sliding Window Counter"),
         (redis_swc, "Redis Sliding Window Counter (Pipeline)"),
         (py_swl, "Pure Python Sliding Window Log"),
-        (redis_swl, "Redis Sliding Window Log (ZSET)"),
+        (redis_swl, "Redis Sliding Window Log (Atomic Lua)"),
+        (py_tb, "Pure Python Token Bucket"),
+        (redis_tb, "Redis Token Bucket (Atomic Lua)"),
+        (py_lb, "Pure Python Leaky Bucket"),
+        (redis_lb, "Redis Leaky Bucket (Atomic Lua)"),
     ]
 
     results = []
     for algo, name in benchmarks:
         results.append(benchmark_algo(algo, name))
 
-    print("\n" + "=" * 60)
-    print(f"{'Algorithm':<42} | {'Throughput (req/s)':<15}")
-    print("-" * 60)
+    print("\n" + "=" * 65)
+    print(f"{'Algorithm':<45} | {'Throughput (req/s)':<15}")
+    print("-" * 65)
     for r in results:
-        print(f"{r['name']:<42} | {r['throughput']:<15,.0f}")
-    print("=" * 60)
+        print(f"{r['name']:<45} | {r['throughput']:<15,.0f}")
+    print("=" * 65)
 
 
 if __name__ == "__main__":

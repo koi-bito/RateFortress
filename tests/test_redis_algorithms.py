@@ -9,8 +9,10 @@ Covers:
 import time
 
 from src.algorithms.redis_fixed_window import RedisFixedWindow
+from src.algorithms.redis_leaky_bucket import RedisLeakyBucket
 from src.algorithms.redis_sliding_window_counter import RedisSlidingWindowCounter
 from src.algorithms.redis_sliding_window_log import RedisSlidingWindowLog
+from src.algorithms.redis_token_bucket import RedisTokenBucket
 
 
 # ==========================================
@@ -111,3 +113,55 @@ def test_redis_sliding_window_log_headers(redis_client):
     assert limiter.remaining(user) == 4
     retry = limiter.retry_after(user)
     assert 1 <= retry <= 10
+
+
+# ==========================================
+# 4. Redis Token Bucket Tests (Lua)
+# ==========================================
+def test_redis_token_bucket_enforcement(redis_client):
+    limiter = RedisTokenBucket(redis_client, capacity=3, refill_rate_per_sec=1.0)
+    user = "user_rtb"
+
+    assert limiter.is_allowed(user) is True
+    assert limiter.is_allowed(user) is True
+    assert limiter.is_allowed(user) is True
+    assert limiter.is_allowed(user) is False
+    assert limiter.remaining(user) == 0
+
+
+def test_redis_token_bucket_multi_instance(redis_client):
+    inst1 = RedisTokenBucket(redis_client, capacity=3, refill_rate_per_sec=0.1)
+    inst2 = RedisTokenBucket(redis_client, capacity=3, refill_rate_per_sec=0.1)
+    user = "shared_rtb"
+
+    assert inst1.is_allowed(user) is True
+    assert inst2.is_allowed(user) is True
+    assert inst1.is_allowed(user) is True
+    assert inst1.is_allowed(user) is False
+    assert inst2.is_allowed(user) is False
+
+
+# ==========================================
+# 5. Redis Leaky Bucket Tests (Lua)
+# ==========================================
+def test_redis_leaky_bucket_enforcement(redis_client):
+    limiter = RedisLeakyBucket(redis_client, capacity=3, leak_rate_per_sec=1.0)
+    user = "user_rlb"
+
+    assert limiter.is_allowed(user) is True
+    assert limiter.is_allowed(user) is True
+    assert limiter.is_allowed(user) is True
+    assert limiter.is_allowed(user) is False
+    assert limiter.remaining(user) == 0
+
+
+def test_redis_leaky_bucket_multi_instance(redis_client):
+    inst1 = RedisLeakyBucket(redis_client, capacity=3, leak_rate_per_sec=0.1)
+    inst2 = RedisLeakyBucket(redis_client, capacity=3, leak_rate_per_sec=0.1)
+    user = "shared_rlb"
+
+    assert inst1.is_allowed(user) is True
+    assert inst2.is_allowed(user) is True
+    assert inst1.is_allowed(user) is True
+    assert inst1.is_allowed(user) is False
+    assert inst2.is_allowed(user) is False

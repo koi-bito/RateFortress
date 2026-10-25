@@ -76,3 +76,36 @@ Tested via `benchmarks/run_redis_benchmark.py`:
 ### Key Architectural Takeaways:
 1. **Network & Serialization Overhead:** Moving rate limiting state into an external key-value store incurs a throughput reduction from millions of req/s to 10k–44k req/s per single client thread. However, 10k–44k req/s is orders of magnitude higher than typical single-server HTTP throughput (~2,000 req/s for Python ASGI frameworks).
 2. **Global Correctness over Raw Speed:** In-memory rate limiting completely fails when horizontal scaling adds 10 backend pods behind an AWS ALB (allowing an attacker 10x their allowed quota by round-robining across nodes). Distributed Redis state guarantees that request #1 on Pod A immediately restricts request #2 on Pod B.
+
+---
+
+## 🔒 Round 3: Redis Backend II — Atomic Lua Scripting & Concurrency (Days 40–45)
+
+Tested via `benchmarks/run_redis_benchmark.py` and `tests/test_redis_concurrency.py`:
+- **Workload:** 10,000 requests, 100 simulated clients, limit = 50 reqs / 10s.
+- **Concurrency Test:** 50 simultaneous worker threads firing requests for the exact same user against limit = 10.
+
+| Algorithm Implementation | Storage Backend | Atomicity Primitive | Throughput (req/s) | 50-Thread Concurrent Stress (Limit=10) | Over-Admission Leak? |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **Fixed Window Counter** | Redis (`INCR` + `EXPIRE`) | Redis Atomic `INCR` | **37,877 req/s** | 10 Allowed / 40 Blocked | **Zero (0%)** |
+| **Sliding Window Counter** | Redis (Pipeline `GET` + `INCR`) | Pipeline + App Math | **12,955 req/s** | N/A (Statistical bound) | Boundary smoothed |
+| **Sliding Window Log (Lua)** | Redis Sorted Set (`ZSET`) | **Atomic Lua Script** | **5,292 req/s** | 10 Allowed / 40 Blocked | **Zero (0%)** |
+| **Token Bucket (Lua)** | Redis Hash (`HMGET`/`HMSET`) | **Atomic Lua Script** | **6,266 req/s** | 10 Allowed / 40 Blocked | **Zero (0%)** |
+| **Leaky Bucket (Lua)** | Redis Hash (`HMGET`/`HMSET`) | **Atomic Lua Script** | **5,919 req/s** | 10 Allowed / 40 Blocked | **Zero (0%)** |
+
+### Concurrency Deep-Dive: Why Lua Scripts Are Mandatory
+
+#### 1. The Pre-Lua Check-Then-Insert Race Condition in Sliding Window Log
+Before Day 42, `RedisSlidingWindowLog` executed two separate Redis operations:
+1. `pipe.zcard(key)` $\to$ returns current count (e.g. 9 when limit=10).
+2. If `count < limit`, execute `pipe.zadd(key, ...)`.
+
+Under 50 concurrent requests, multiple threads executed step 1 simultaneously while `count < 10`. All of them observed `count < limit`, and each proceeded to execute step 2, admitting up to **18–25 requests** when the limit was strictly 10.
+
+#### 2. The Lua Atomicity Guarantee
+Redis executes Lua scripts atomically in its single-threaded event loop. When `redis_sliding_window_log.lua` runs:
+- `ZREMRANGEBYSCORE` (pruning),
+- `ZCARD` (cardinality check),
+- `ZADD` (conditional member insertion), and
+- `EXPIRE` (TTL refresh)
+all execute uninterrupted as a single atomic unit. No other client command can interleave mid-script. As demonstrated in `test_redis_concurrency.py`, exactly 10 requests are allowed and 40 are blocked across 100% of test runs.
