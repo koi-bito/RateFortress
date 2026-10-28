@@ -76,3 +76,4 @@ def test_metrics_endpoint_bypasses_rate_limiting():
     for _ in range(150):
         resp = client.get("/metrics")
         assert resp.status_code == 200
+

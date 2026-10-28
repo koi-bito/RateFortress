@@ -11,6 +11,7 @@ preventing event loop thread blocking under high concurrent loads.
 
 import inspect
 import time
+import uuid
 from collections.abc import Callable
 from typing import Any
 
@@ -38,6 +39,7 @@ from src.algorithms.token_bucket import TokenBucket
 from src.middleware.circuit_breaker import CircuitBreaker
 from src.middleware.config import API_KEYS, DEFAULT_ROUTE_RULES, EndpointRule
 from src.middleware.endpoint_trie import EndpointTrie
+from src.monitoring.logging_config import app_logger
 from src.monitoring.metrics import (
     ACTIVE_REQUESTS,
     BLOCKED_REQUESTS,
@@ -45,6 +47,7 @@ from src.monitoring.metrics import (
     REQUEST_COUNT,
     REQUEST_LATENCY,
 )
+from src.monitoring.tracing import trace_rate_limiter_evaluation
 
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
@@ -271,6 +274,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         if path == "/metrics":
             return await call_next(request)
 
+        request_id = request.headers.get("x-request-id") or str(uuid.uuid4())
         ACTIVE_REQUESTS.inc()
         start_time = time.perf_counter()
         try:
@@ -279,52 +283,80 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                 path, multiplier
             )
 
-            # Wrap rate evaluation in circuit breaker (resilience fail-open)
-            limiter_start = time.perf_counter()
-            is_coro = inspect.iscoroutinefunction(limiter.is_allowed)
-            if is_coro:
-                is_allowed = await self.circuit_breaker.async_call(
-                    limiter.is_allowed, client_id, fallback=True
+            # Wrap rate evaluation in distributed trace span and circuit breaker
+            with trace_rate_limiter_evaluation(
+                algorithm=algorithm_name,
+                client_id=client_id,
+                tier=tier,
+                endpoint=path,
+            ) as trace_data:
+                limiter_start = time.perf_counter()
+                is_coro = inspect.iscoroutinefunction(limiter.is_allowed)
+                if is_coro:
+                    is_allowed = await self.circuit_breaker.async_call(
+                        limiter.is_allowed, client_id, fallback=True
+                    )
+                else:
+                    is_allowed = self.circuit_breaker.call(
+                        limiter.is_allowed, client_id, fallback=True
+                    )
+                limiter_overhead = time.perf_counter() - limiter_start
+                LIMITER_OVERHEAD.labels(algorithm=algorithm_name, tier=tier).observe(
+                    limiter_overhead
                 )
-            else:
-                is_allowed = self.circuit_breaker.call(
-                    limiter.is_allowed, client_id, fallback=True
-                )
-            limiter_overhead = time.perf_counter() - limiter_start
-            LIMITER_OVERHEAD.labels(algorithm=algorithm_name, tier=tier).observe(
-                limiter_overhead
-            )
 
-            if not is_allowed:
-                remaining = 0
-                retry_after = await self._safe_retry_after(limiter, client_id)
-                headers = {
-                    "X-RateLimit-Limit": str(nominal_limit),
-                    "X-RateLimit-Remaining": str(remaining),
-                    "Retry-After": str(retry_after),
-                    "X-RateLimit-Tier": tier,
-                }
-                elapsed = time.perf_counter() - start_time
-                REQUEST_COUNT.labels(
-                    endpoint=path,
-                    status="blocked",
-                    algorithm=algorithm_name,
-                    tier=tier,
-                ).inc()
-                BLOCKED_REQUESTS.labels(
-                    endpoint=path, tier=tier, algorithm=algorithm_name
-                ).inc()
-                REQUEST_LATENCY.labels(endpoint=path, status="blocked").observe(elapsed)
+                trace_data["allowed"] = is_allowed
 
-                return JSONResponse(
-                    status_code=429,
-                    content={
-                        "error": "rate limit exceeded",
-                        "detail": f"Quota of {nominal_limit} requests exceeded.",
-                        "retry_after": retry_after,
-                    },
-                    headers=headers,
-                )
+                if not is_allowed:
+                    remaining = 0
+                    trace_data["remaining"] = remaining
+                    retry_after = await self._safe_retry_after(limiter, client_id)
+                    headers = {
+                        "X-RateLimit-Limit": str(nominal_limit),
+                        "X-RateLimit-Remaining": str(remaining),
+                        "Retry-After": str(retry_after),
+                        "X-RateLimit-Tier": tier,
+                        "X-Request-ID": request_id,
+                    }
+                    elapsed = time.perf_counter() - start_time
+                    REQUEST_COUNT.labels(
+                        endpoint=path,
+                        status="blocked",
+                        algorithm=algorithm_name,
+                        tier=tier,
+                    ).inc()
+                    BLOCKED_REQUESTS.labels(
+                        endpoint=path, tier=tier, algorithm=algorithm_name
+                    ).inc()
+                    REQUEST_LATENCY.labels(endpoint=path, status="blocked").observe(elapsed)
+
+                    # Emit structured JSON log event for Loki
+                    app_logger.warning(
+                        "Rate limit quota exceeded",
+                        extra={
+                            "request_id": request_id,
+                            "client_id": client_id,
+                            "tier": tier,
+                            "algorithm": algorithm_name,
+                            "endpoint": path,
+                            "method": request.method,
+                            "status_code": 429,
+                            "latency_ms": round(elapsed * 1000, 2),
+                            "limiter_overhead_ms": round(limiter_overhead * 1000, 3),
+                            "retry_after": retry_after,
+                            "remaining": 0,
+                        },
+                    )
+
+                    return JSONResponse(
+                        status_code=429,
+                        content={
+                            "error": "rate limit exceeded",
+                            "detail": f"Quota of {nominal_limit} requests exceeded.",
+                            "retry_after": retry_after,
+                        },
+                        headers=headers,
+                    )
 
             response = await call_next(request)
             elapsed = time.perf_counter() - start_time
@@ -350,6 +382,24 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             response.headers["X-RateLimit-Remaining"] = str(remaining)
             response.headers["Retry-After"] = str(retry_after)
             response.headers["X-RateLimit-Tier"] = tier
+            response.headers["X-Request-ID"] = request_id
+
+            # Emit structured JSON log event for Loki
+            app_logger.info(
+                "Request permitted",
+                extra={
+                    "request_id": request_id,
+                    "client_id": client_id,
+                    "tier": tier,
+                    "algorithm": algorithm_name,
+                    "endpoint": path,
+                    "method": request.method,
+                    "status_code": response.status_code,
+                    "latency_ms": round(elapsed * 1000, 2),
+                    "limiter_overhead_ms": round(limiter_overhead * 1000, 3),
+                    "remaining": remaining,
+                },
+            )
 
             return response
         finally:

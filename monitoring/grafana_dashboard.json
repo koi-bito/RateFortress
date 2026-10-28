@@ -1,0 +1,188 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": "-- Grafana --",
+        "enable": true,
+        "hide": true,
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": true,
+  "panels": [
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "id": 100,
+      "title": "⚡ RateFortress Live Traffic & Throttling Overview",
+      "type": "row"
+    },
+    {
+      "title": "Throughput: Allowed vs Blocked (Requests / Sec)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 1 },
+      "id": 1,
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "fillOpacity": 25,
+            "stacking": { "mode": "normal", "group": "A" }
+          },
+          "unit": "reqps"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(ratefortress_requests_total{status=\"allowed\"}[1m]))",
+          "legendFormat": "Allowed Requests",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(rate(ratefortress_requests_total{status=\"blocked\"}[1m]))",
+          "legendFormat": "Blocked (HTTP 429)",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "title": "End-to-End Latency Percentiles (p50, p95, p99)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 1 },
+      "id": 2,
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "lineWidth": 2
+          },
+          "unit": "s"
+        }
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum(rate(ratefortress_request_latency_seconds_bucket[1m])) by (le))",
+          "legendFormat": "p50 Median",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(ratefortress_request_latency_seconds_bucket[1m])) by (le))",
+          "legendFormat": "p95 Tail",
+          "refId": "B"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum(rate(ratefortress_request_latency_seconds_bucket[1m])) by (le))",
+          "legendFormat": "p99 Extreme",
+          "refId": "C"
+        }
+      ]
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 9 },
+      "id": 101,
+      "title": "🛡️ Abuse Protection, Pricing Tiers & Overhead Breakdown",
+      "type": "row"
+    },
+    {
+      "title": "Blocked Requests by Pricing Tier (Free vs Paid vs Enterprise)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 10 },
+      "id": 3,
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "bars",
+            "lineWidth": 1,
+            "fillOpacity": 60
+          },
+          "unit": "reqps"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(ratefortress_blocked_requests_total[1m])) by (tier)",
+          "legendFormat": "{{tier}} tier",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Rate Limiter Decision Overhead (p95 by Algorithm)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 10 },
+      "id": 4,
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2
+          },
+          "unit": "s"
+        }
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(ratefortress_limiter_overhead_seconds_bucket[1m])) by (le, algorithm))",
+          "legendFormat": "{{algorithm}} decision overhead",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Active In-Flight Concurrent Requests",
+      "type": "gauge",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 10 },
+      "id": 5,
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "max": 500,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 150 },
+              { "color": "red", "value": 350 }
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "expr": "ratefortress_active_requests",
+          "legendFormat": "In-Flight Concurrency",
+          "refId": "A"
+        }
+      ]
+    }
+  ],
+  "refresh": "5s",
+  "schemaVersion": 38,
+  "style": "dark",
+  "tags": ["ratefortress", "rate-limiting", "observability", "fastapi"],
+  "time": { "from": "now-15m", "to": "now" },
+  "timepicker": {
+    "refresh_intervals": ["1s", "5s", "10s", "30s", "1m"]
+  },
+  "timezone": "browser",
+  "title": "RateFortress — Production Observability Dashboard",
+  "uid": "ratefortress-overview",
+  "version": 1
+}

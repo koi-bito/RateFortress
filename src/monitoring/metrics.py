@@ -81,3 +81,4 @@ ACTIVE_REQUESTS = Gauge(
 def get_metrics_payload() -> tuple[bytes, str]:
     """Generates the latest Prometheus-formatted metrics payload."""
     return generate_latest(REGISTRY), CONTENT_TYPE_LATEST
+

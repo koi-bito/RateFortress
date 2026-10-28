@@ -357,3 +357,59 @@ A structured record of architectural decisions, DSA insights, failure modes, and
   ```
 - **Automated Validation:** Scripted `monitoring/validate_promql_metrics.py` to simulate multi-tier traffic bursts and assert that all required PromQL metric series and label combinations are present in `/metrics`.
 - **Status:** Week 10 Complete! Ready for Week 11: Observability with Grafana, Logs & Tracing.
+
+---
+
+## 📅 Week 11 — Observability: Grafana, Logs & Tracing (Days 62–66)
+
+### Day 62 — Grafana Setup & Docker Compose Orchestration
+- **Full-Stack Orchestration:** Created root `docker-compose.yml` wiring together all 6 core services on an isolated bridge network (`ratefortress-net`):
+  1. `ratefortress`: FastAPI API gateway running Uvicorn with auto-instrumented middleware.
+  2. `redis`: Distributed Redis 7 storage backend with `volatile-lru` key eviction.
+  3. `prometheus`: Scrapes metrics every 5 seconds and evaluates SLA alert rules.
+  4. `grafana`: Web dashboard engine with automated provisioning of datasources and dashboards.
+  5. `loki`: High-efficiency log aggregation engine.
+  6. `promtail`: Daemon log shipper forwarding structured JSON application logs into Loki.
+- **Zero-Config Provisioning:** Built `monitoring/grafana/provisioning/datasources/datasources.yml` and `dashboards/dashboards.yml` so any engineer cloning the repo gets fully linked datasources (Prometheus + Loki) and pre-loaded dashboards on first boot without clicking through manual setup wizards.
+
+### Day 63 — Live Observability Dashboard Panels
+- **Dashboard Construction (`monitoring/grafana_dashboard.json`):**
+  - *Panel 1: Throughput (Allowed vs. Blocked):* Stacked time-series visualizing nominal traffic vs. 429 throttling spikes.
+  - *Panel 2: Latency Percentiles (p50, p95, p99):* Sub-second latency distributions derived from histogram quantiles.
+  - *Panel 3: Blocked Requests by Pricing Tier:* Direct breakdown comparing Free, Paid, Enterprise, and Anonymous throttle rates.
+  - *Panel 4: Limiter Decision Overhead:* Microsecond latency breakdown isolated to algorithm execution and Redis I/O.
+  - *Panel 5: In-Flight Concurrency Gauge:* Real-time active requests counter.
+- **Which Panel a Paid Customer Would Want to See on a Public Status Page:**
+  - A paid customer cares almost exclusively about **Quota Remaining & Throttling Rate vs. Service Health**. Specifically, a panel showing **Allowed vs. Blocked Requests for their specific API Key with a Remaining Quota trend line**.
+  - Internal backend metrics (like Redis Lua execution overhead or connection pool socket counts) are irrelevant to a customer; they want to know: *“Am I getting 429 throttled because my own worker scripts are exceeding our contracted SLA tier, or is the API gateway itself experiencing an outage?”*
+
+### Day 64 — Structured JSON Logging & Loki Aggregation
+- **Structured JSON Logging Implementation (`src/monitoring/logging_config.py`):**
+  - Built `JSONLogFormatter` serializing all log events into compact JSON records with standard metadata: `timestamp` (ISO-8601 UTC), `level`, `service`, `request_id`, `client_id`, `tier`, `algorithm`, `endpoint`, `status_code`, `latency_ms`, `limiter_overhead_ms`, and `retry_after`.
+  - Configured `monitoring/promtail.yml` with regex pipeline stages extracting JSON fields into indexed Loki labels (`tier`, `algorithm`, `status_code`).
+- **Why Structured JSON Logging Matters for Log Aggregation:**
+  - In a single local terminal, human eyes can skim unstructured text like `[WARN] client_123 hit rate limit`.
+  - In a distributed cluster producing millions of logs across 10 pods, unstructured text requires expensive, brittle regex grep operations.
+  - With structured JSON logging, Loki and LogQL treat fields as **native queryable dimensions**:
+    ```logql
+    {job="ratefortress"} | json | tier="paid" and status_code=429 | latency_ms > 100
+    ```
+    This turns log searching from full-scan string matching into instant, indexed database-style filtering.
+
+### Day 65 — Distributed Tracing with OpenTelemetry
+- **Tracing Instrumentation (`src/monitoring/tracing.py`):**
+  - Integrated `opentelemetry-sdk` and `opentelemetry-instrumentation-fastapi`.
+  - Implemented `trace_rate_limiter_evaluation` context manager to inject custom child spans around rate-limiting decision blocks and Redis calls with attributes `rate_limit.algorithm`, `client.id`, `client.tier`, and `rate_limit.allowed`.
+- **The "Three Pillars of Observability" in One Sentence Each:**
+  - **Metrics:** Answers *“Is something wrong, how much is it happening, and what is the high-level trend?”* (aggregated numerical counters and latency quantiles over time).
+  - **Logs:** Answers *“What specific event or error occurred, under what contextual parameters, at an exact moment in time?”* (detailed chronological records of individual operations).
+  - **Traces:** Answers *“Where across the distributed lifecycle of a single request was time spent, and which specific service or hop caused the delay?”* (causal directed acyclic graphs of request propagation).
+
+### Day 66 — SLA Alerting Rules & Stack Review
+- **Alert Rules Implemented (`monitoring/alert_rules.yml`):**
+  - `PaidTierThrottlingSpike`: Fires if paying customers experience more than 0.5 blocked req/s over 2 minutes (signals quota misconfiguration or traffic surge).
+  - `EnterpriseTenantThrottled`: Critical alert if any enterprise tenant experiences throttling (SLA breach risk).
+  - `LimiterDecisionLatencyHigh`: Warning if p95 rate-limiter decision overhead exceeds 10ms (signals Redis connection saturation or CPU contention).
+  - `RateFortressGatewayDown`: Pager alert if Prometheus fails to scrape `/metrics` for >30 seconds.
+- **Test Validation:** Created `tests/test_observability_week11.py` validating JSON log formatting, OpenTelemetry span creation, alert rules YAML schema, Docker Compose definitions, and Grafana dashboard validity. All **112 tests passing**.
+- **Status:** Week 11 Complete! Full Observability Stack (Metrics + Logs + Tracing + Dashboards + Alerts) achieved. Ready for Week 12: Algorithm Comparison Engine.

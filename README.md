@@ -39,14 +39,24 @@ ratefortress/
 
 ## 🚦 Status & Milestones
 
-- **Current Status:** Week 10 — Observability: Prometheus Complete (Prometheus Telemetry Instrumentation, Labeled Request & Blocked Counters, Limiter Overhead & Latency Histograms, Scrape Configuration & PromQL Verification) ✅
-- **Next Milestone:** Week 11 — Observability: Grafana, Logs & Tracing (Days 62–66)
+- **Current Status:** Week 11 — Observability: Grafana, Logs & Tracing Complete (Docker Compose Stack, Live Grafana Dashboards, Structured JSON Logging for Loki/Promtail, OpenTelemetry Distributed Tracing & SLA Alerting Rules) ✅
+- **Next Milestone:** Week 12 — Algorithm Comparison Engine (Days 67–71)
 
 ---
 
 ## ⚡ Quickstart
 
-### 1. Setup Virtual Environment
+### 1. Run Complete Observability Stack (Docker Compose)
+
+```bash
+docker-compose up -d
+```
+- **RateFortress API Gateway:** `http://localhost:8000`
+- **Prometheus Telemetry:** `http://localhost:9090`
+- **Grafana Live Dashboards:** `http://localhost:3000` (User: `admin` / Password: `admin`)
+- **Loki Log Aggregation:** `http://localhost:3100`
+
+### 2. Setup Local Python Environment
 
 ```bash
 # Windows

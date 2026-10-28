@@ -1,0 +1,47 @@
+# Prometheus Alerting Rules for RateFortress Gateway (Week 11)
+groups:
+  - name: ratefortress_sla_alerts
+    rules:
+      # 1. Alert if paying customers face unexpected rate-limiting throttling
+      - alert: PaidTierThrottlingSpike
+        expr: sum(rate(ratefortress_blocked_requests_total{tier="paid"}[2m])) > 0.5
+        for: 1m
+        labels:
+          severity: warning
+          service: ratefortress
+        annotations:
+          summary: "Paid tier client throttling detected"
+          description: "Paid tier requests are being throttled at {{ $value | humanize }} req/s over the last 2 minutes. Quotas may need tier elevation."
+
+      # 2. Critical Alert if enterprise contracts face any throttling
+      - alert: EnterpriseTenantThrottled
+        expr: sum(rate(ratefortress_blocked_requests_total{tier="enterprise"}[1m])) > 0
+        for: 30s
+        labels:
+          severity: critical
+          service: ratefortress
+        annotations:
+          summary: "CRITICAL: Enterprise client throttling detected"
+          description: "Enterprise tier requests are being throttled (current rate: {{ $value }} req/s). Potential enterprise SLA breach."
+
+      # 3. Alert if rate limiter evaluation overhead exceeds 10ms
+      - alert: LimiterDecisionLatencyHigh
+        expr: histogram_quantile(0.95, sum(rate(ratefortress_limiter_overhead_seconds_bucket[5m])) by (le)) > 0.010
+        for: 2m
+        labels:
+          severity: warning
+          service: ratefortress
+        annotations:
+          summary: "Rate limiter internal evaluation overhead > 10ms"
+          description: "p95 rate limiting overhead is currently {{ $value | humanizeDuration }}. Check Redis connection pool latency or CPU contention."
+
+      # 4. Service availability alert
+      - alert: RateFortressGatewayDown
+        expr: up{job="ratefortress"} == 0
+        for: 30s
+        labels:
+          severity: page
+          service: ratefortress
+        annotations:
+          summary: "RateFortress gateway target is unreachable"
+          description: "Prometheus has failed to scrape RateFortress /metrics for more than 30 seconds."

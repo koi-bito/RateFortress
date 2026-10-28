@@ -1,0 +1,114 @@
+version: "3.8"
+
+services:
+  # 1. RateFortress API Gateway & Rate Limiting Engine
+  ratefortress:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ratefortress-app
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - RATEFORTRESS_BACKEND=redis_async
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - USE_FAKE_REDIS=false
+      - LOG_FORMAT=json
+    depends_on:
+      - redis
+    volumes:
+      - ./logs:/app/logs
+    networks:
+      - ratefortress-net
+
+  # 2. Redis Distributed Storage Backend
+  redis:
+    image: redis:7.2-alpine
+    container_name: ratefortress-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "256mb", "--maxmemory-policy", "volatile-lru"]
+    volumes:
+      - redis-data:/data
+    networks:
+      - ratefortress-net
+
+  # 3. Prometheus Telemetry Scraper & Alert Engine
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    container_name: ratefortress-prometheus
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/alert_rules.yml:/etc/prometheus/alert_rules.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--web.console.libraries=/usr/share/prometheus/console_libraries"
+      - "--web.console.templates=/usr/share/prometheus/consoles"
+    networks:
+      - ratefortress-net
+
+  # 4. Grafana Unified Visualization & Live Dashboards
+  grafana:
+    image: grafana/grafana:11.2.0
+    container_name: ratefortress-grafana
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana_dashboard.json:/var/lib/grafana/dashboards/ratefortress_dashboard.json:ro
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      - prometheus
+      - loki
+    networks:
+      - ratefortress-net
+
+  # 5. Loki Log Aggregation Engine
+  loki:
+    image: grafana/loki:3.1.1
+    container_name: ratefortress-loki
+    restart: unless-stopped
+    ports:
+      - "3100:3100"
+    command: -config.file=/etc/loki/local-config.yaml
+    volumes:
+      - loki-data:/loki
+    networks:
+      - ratefortress-net
+
+  # 6. Promtail Structured Log Shipper
+  promtail:
+    image: grafana/promtail:3.1.1
+    container_name: ratefortress-promtail
+    restart: unless-stopped
+    volumes:
+      - ./monitoring/promtail.yml:/etc/promtail/config.yml:ro
+      - ./logs:/var/log/ratefortress:ro
+    command: -config.file=/etc/promtail/config.yml
+    depends_on:
+      - loki
+    networks:
+      - ratefortress-net
+
+networks:
+  ratefortress-net:
+    driver: bridge
+
+volumes:
+  redis-data:
+  prometheus-data:
+  grafana-data:
+  loki-data:

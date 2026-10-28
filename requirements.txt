@@ -40,4 +40,6 @@ lupa==2.8
 locust==2.47.0
 matplotlib==3.11.2
 prometheus-client==0.26.0
+opentelemetry-sdk==1.45.1
+opentelemetry-instrumentation-fastapi==0.66b1
 

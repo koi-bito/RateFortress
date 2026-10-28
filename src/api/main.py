@@ -8,6 +8,7 @@ from starlette.responses import Response
 
 from src.middleware.rate_limit_middleware import RateLimitMiddleware
 from src.monitoring.metrics import get_metrics_payload
+from src.monitoring.tracing import setup_tracing
 from src.storage.redis_client import get_redis_client, get_shared_fake_server
 
 
@@ -20,6 +21,9 @@ def create_app(backend: str | None = None) -> FastAPI:
         version="0.1.0",
         description="High-performance distributed rate limiter engine and API gateway.",
     )
+
+    # Initialize OpenTelemetry distributed tracing
+    setup_tracing(application)
 
     redis_sync = None
     redis_async = None

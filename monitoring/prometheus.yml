@@ -4,6 +4,9 @@ global:
   scrape_timeout: 4s
   evaluation_interval: 5s
 
+rule_files:
+  - "alert_rules.yml"
+
 scrape_configs:
   - job_name: "ratefortress"
     metrics_path: "/metrics"
@@ -14,3 +17,4 @@ scrape_configs:
           app: "ratefortress"
           service: "api-gateway"
           env: "production"
+
