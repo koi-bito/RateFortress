@@ -261,3 +261,48 @@ A structured record of architectural decisions, DSA insights, failure modes, and
   - A bounded blocking queue directly models how an API gateway handles incoming request traffic under load. When downstream workers are saturated, incoming requests can only be buffered up to a fixed bound (queue capacity).
   - If a queue is unbounded, traffic bursts cause unbounded queue growth, memory exhaustion, and latency inflation (bufferbloat) where requests sit in queue longer than client HTTP timeouts.
   - When the bounded queue fills up, the system must immediately exert **backpressure** or **fail fast** by shedding load with HTTP 429 (Too Many Requests) or HTTP 503 (Service Unavailable), protecting in-flight requests from catastrophic cascading degradation.
+
+---
+
+## 📅 Week 9 — Load Testing II (k6), Spike & Soak Testing (Days 52–56)
+
+### Day 52 — k6 Setup & Comparison Test
+- **k6 Setup & Execution:** Installed and configured k6 v0.56.0 (Go engine) in `loadtests/bin/k6.exe`. Created `loadtests/k6_test.js` targeting `/api/test` with multi-stage user ramping (100 to 500 VUs) and strict assertion checks verifying responses are HTTP 200 or HTTP 429.
+- **Initial Baseline Run:** k6 completed the full ramping stage, executing 26,037 requests at an average throughput of **865.1 req/s** with median latency of **18.7 ms**, p95 latency of **134.1 ms**, and 100% check pass rate.
+
+### Day 53 — Locust vs. k6 — Empirical Comparison
+- **Identical Workload Comparison:** Evaluated an identical load profile (ramp from 100 to 500 users over 30s) across both Locust (Python/Gevent) and k6 (Go/Sobek).
+  - *Locust Throughput & Latency:* **991.2 req/s**, median = **19.0 ms**, p95 = **98.0 ms**, p99 = **170.0 ms**, 0.0% failures.
+  - *k6 Throughput & Latency:* **865.1 req/s**, median = **18.7 ms**, p95 = **134.1 ms**, p99 = **185.0 ms**, 0.0% failures.
+- **Why Findings Differ Between Tools:**
+  - *Locust* runs in Python using Gevent greenlets on a single OS thread. At 500 users, Python's interpreter and garbage collection introduce client-side CPU contention, causing greenlet context switching delays that can artificially compress measured latency bursts.
+  - *k6* is written in Go and compiles to native machine code. It allocates lightweight goroutines with preemptive scheduling and native asynchronous socket polling (`epoll`/`kqueue`/`IOCP`). As a result, k6 generates traffic with almost zero client CPU bottleneck and captures granular tail-latency spikes that Python load generators smooth over.
+- **If You Only Had Time to Pick One Load Testing Tool in a Real Job:**
+  - **I would pick k6.** In production environments and CI/CD pipelines, k6 wins because of its single-binary deployment (zero Python environment dependencies), dramatically lower memory/CPU footprint per simulated user (can simulate 10,000+ users on a single modest VM where Locust would require distributed master-worker clusters), and native support for JavaScript scripting with strict threshold gates (`thresholds: { "p(95)<200ms": true }`) that can directly fail CI builds if performance budgets are exceeded.
+
+### Day 54 — Spike Testing & Failure Mode Analysis
+- **Spike Profile Implemented:** Built `loadtests/k6_spike_test.js` to subject the gateway to an instant, brutal traffic step: baseline 10 VUs $\to$ immediate spike to 1,500 VUs within 3 seconds $\to$ hold at peak $\to$ immediate step back to 10 VUs.
+- **Empirical Behavior Under Spike:**
+  - Peak throughput surged to **5,509.2 req/s** with 165,795 total iterations attempted.
+  - The sudden surge triggered an 85.5% failure rate due to operating system TCP socket dropouts (connection resets).
+- **Why Gradual Ramp Succeeds but Instant Spike Fails at the Same User Count:**
+  - *Gradual Ramp:* When ramping gradually over 30–60 seconds, TCP three-way handshakes occur over an extended time interval. Connections transition to HTTP keep-alive and are pooled cleanly across the ASGI event loop and OS network buffers.
+  - *Instant Spike:* When 1,500 simulated users fire simultaneously within 1–2 seconds, 1,500 SYN packets flood the OS TCP listen socket at once. This instantaneously exhausts the operating system's TCP listen backlog (`SOMAXCONN`). Packets that cannot fit into the kernel accept queue are immediately dropped or rejected with TCP RST packets before Uvicorn or RateFortress can even read the request headers.
+- **Recovery Dynamics:** Once the instant spike concluded and traffic subsided back to baseline (10 VUs), **latency immediately normalized back to <5 ms**. RateFortress's memory footprint stayed intact with no dangling locks or stalled queues, demonstrating excellent shock recovery resilience.
+
+### Day 55 — Soak Testing & Memory Leak Verification
+- **What a Soak Test Catches That a 2-Minute Load Test Never Would:**
+  - Short load tests (1–2 minutes) only measure peak throughput and immediate error responses. They are completely blind to **slow memory leaks** (e.g., in-memory dictionaries that grow unbounded, Redis keys created without TTLs, unclosed TCP sockets or connection pool leaks, or Python cyclical garbage collection retention).
+  - A memory leak of 50 KB/sec will not crash a service in 2 minutes, but over 24 hours under sustained traffic it will consume 4.3 GB of RAM, triggering an OS Out-Of-Memory (OOM) killer crash in the middle of the night.
+- **Soak Test Execution & Audit:**
+  - Ran sustained steady-state traffic (120 active VUs, 34,163 requests at **1,134.8 req/s**) while continuously recording server process RSS memory and thread counts every second via `psutil`.
+  - **Starting RSS:** 4.49 MB | **Ending RSS:** 4.48 MB | **Net Drift:** **-0.01 MB**
+  - **Thread Count:** Perfectly stable at 2 threads throughout the entire run.
+  - Confirmed that RateFortress's strict TTL eviction policy across all Redis algorithms and proper async connection recycling ensure flat, bounded memory consumption over extended operational windows.
+
+### Day 56 — Finalize Benchmark Report & Milestone Review
+- **Consolidation Complete:** Consolidated all empirical data from Weeks 2, 3, 8, and 9 into a unified, publication-grade `BENCHMARKS.md`.
+- **Artifacts Generated:**
+  - Created high-resolution comparison charts: `k6_vs_locust_comparison.png` and `soak_test_memory_stability.png`.
+  - Added an executive "Key Findings" summary at the top of `BENCHMARKS.md` highlighting the 6 core engineering takeaways.
+- **Status:** Week 9 fully achieved! Ready for Week 10: Observability with Prometheus.

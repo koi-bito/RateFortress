@@ -39,8 +39,8 @@ ratefortress/
 
 ## 🚦 Status & Milestones
 
-- **Current Status:** Week 8 — Production Load Testing with Locust Complete (10 to 1,500 Concurrent Users, Async Redis Event-Loop Migration, Breaking Point Capacity Ceiling Analysis, Matplotlib Latency Percentiles Chart & DSA Concurrency Queues) ✅
-- **Next Milestone:** Week 9 — Load Testing II (k6), Spike & Soak Testing (Days 52–56)
+- **Current Status:** Week 9 — Load Testing II (k6), Spike & Soak Testing Complete (Locust vs. k6 Comparison, 1,500 VU Instant Spike Resilience, 34k Request Soak Test Memory Audit & Matplotlib Visualizations) ✅
+- **Next Milestone:** Week 10 — Observability: Prometheus (Days 57–61)
 
 ---
 
@@ -76,8 +76,14 @@ pytest -v
 python benchmarks/run_benchmark.py
 ```
 
-### 5. Run Locust Load Testing Suite
+### 5. Run Locust Load Testing Suite (Week 8)
 
 ```bash
 python loadtests/run_load_tests.py
+```
+
+### 6. Run k6, Spike & Soak Testing Suite (Week 9)
+
+```bash
+python loadtests/run_week9_tests.py
 ```

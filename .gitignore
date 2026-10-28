@@ -6,3 +6,6 @@ ratefortress_env/
 *.log
 .pytest_cache/
 .ruff_cache/
+loadtests/bin/
+*.exe
+
