@@ -4,8 +4,10 @@ import os
 
 import fakeredis.aioredis as fake_aio
 from fastapi import FastAPI
+from starlette.responses import Response
 
 from src.middleware.rate_limit_middleware import RateLimitMiddleware
+from src.monitoring.metrics import get_metrics_payload
 from src.storage.redis_client import get_redis_client, get_shared_fake_server
 
 
@@ -44,6 +46,12 @@ def create_app(backend: str | None = None) -> FastAPI:
     def health():
         """Health check endpoint."""
         return {"status": "healthy"}
+
+    @application.get("/metrics")
+    def metrics():
+        """Prometheus scrape endpoint exposing gateway telemetry."""
+        payload, content_type = get_metrics_payload()
+        return Response(content=payload, media_type=content_type)
 
     @application.get("/api/test")
     def test_endpoint():

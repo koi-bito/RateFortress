@@ -10,6 +10,7 @@ preventing event loop thread blocking under high concurrent loads.
 """
 
 import inspect
+import time
 from collections.abc import Callable
 from typing import Any
 
@@ -37,6 +38,13 @@ from src.algorithms.token_bucket import TokenBucket
 from src.middleware.circuit_breaker import CircuitBreaker
 from src.middleware.config import API_KEYS, DEFAULT_ROUTE_RULES, EndpointRule
 from src.middleware.endpoint_trie import EndpointTrie
+from src.monitoring.metrics import (
+    ACTIVE_REQUESTS,
+    BLOCKED_REQUESTS,
+    LIMITER_OVERHEAD,
+    REQUEST_COUNT,
+    REQUEST_LATENCY,
+)
 
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
@@ -230,7 +238,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
             self._limiter_cache[cache_key] = limiter
 
-        return self._limiter_cache[cache_key], effective_limit
+        return self._limiter_cache[cache_key], effective_limit, rule.algorithm
 
     async def _safe_remaining(self, limiter: Any, client_id: str, default: int) -> int:
         func = getattr(limiter, "remaining", getattr(limiter, "get_remaining", None))
@@ -257,54 +265,92 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             return 1
 
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
-        client_id, tier, multiplier = self._get_client_identity(request)
         path = request.url.path
 
-        limiter, nominal_limit = self._get_limiter_for_route(path, multiplier)
+        # Telemetry / metrics endpoint bypasses rate limiting
+        if path == "/metrics":
+            return await call_next(request)
 
-        # Wrap rate evaluation in circuit breaker (resilience fail-open)
-        is_coro = inspect.iscoroutinefunction(limiter.is_allowed)
-        if is_coro:
-            is_allowed = await self.circuit_breaker.async_call(
-                limiter.is_allowed, client_id, fallback=True
-            )
-        else:
-            is_allowed = self.circuit_breaker.call(
-                limiter.is_allowed, client_id, fallback=True
-            )
-
-        if not is_allowed:
-            remaining = 0
-            retry_after = await self._safe_retry_after(limiter, client_id)
-            headers = {
-                "X-RateLimit-Limit": str(nominal_limit),
-                "X-RateLimit-Remaining": str(remaining),
-                "Retry-After": str(retry_after),
-                "X-RateLimit-Tier": tier,
-            }
-            return JSONResponse(
-                status_code=429,
-                content={
-                    "error": "rate limit exceeded",
-                    "detail": f"Quota of {nominal_limit} requests exceeded.",
-                    "retry_after": retry_after,
-                },
-                headers=headers,
-            )
-
-        response = await call_next(request)
-
-        # Attach rate limit headers to all successful/downstream responses
+        ACTIVE_REQUESTS.inc()
+        start_time = time.perf_counter()
         try:
-            remaining = await self._safe_remaining(limiter, client_id, nominal_limit)
-            retry_after = await self._safe_retry_after(limiter, client_id)
-        except Exception:  # noqa: BLE001
-            remaining = nominal_limit
-            retry_after = 0
+            client_id, tier, multiplier = self._get_client_identity(request)
+            limiter, nominal_limit, algorithm_name = self._get_limiter_for_route(
+                path, multiplier
+            )
 
-        response.headers["X-RateLimit-Limit"] = str(nominal_limit)
-        response.headers["X-RateLimit-Remaining"] = str(remaining)
-        response.headers["Retry-After"] = str(retry_after)
-        response.headers["X-RateLimit-Tier"] = tier
+            # Wrap rate evaluation in circuit breaker (resilience fail-open)
+            limiter_start = time.perf_counter()
+            is_coro = inspect.iscoroutinefunction(limiter.is_allowed)
+            if is_coro:
+                is_allowed = await self.circuit_breaker.async_call(
+                    limiter.is_allowed, client_id, fallback=True
+                )
+            else:
+                is_allowed = self.circuit_breaker.call(
+                    limiter.is_allowed, client_id, fallback=True
+                )
+            limiter_overhead = time.perf_counter() - limiter_start
+            LIMITER_OVERHEAD.labels(algorithm=algorithm_name, tier=tier).observe(
+                limiter_overhead
+            )
 
-        return response
+            if not is_allowed:
+                remaining = 0
+                retry_after = await self._safe_retry_after(limiter, client_id)
+                headers = {
+                    "X-RateLimit-Limit": str(nominal_limit),
+                    "X-RateLimit-Remaining": str(remaining),
+                    "Retry-After": str(retry_after),
+                    "X-RateLimit-Tier": tier,
+                }
+                elapsed = time.perf_counter() - start_time
+                REQUEST_COUNT.labels(
+                    endpoint=path,
+                    status="blocked",
+                    algorithm=algorithm_name,
+                    tier=tier,
+                ).inc()
+                BLOCKED_REQUESTS.labels(
+                    endpoint=path, tier=tier, algorithm=algorithm_name
+                ).inc()
+                REQUEST_LATENCY.labels(endpoint=path, status="blocked").observe(elapsed)
+
+                return JSONResponse(
+                    status_code=429,
+                    content={
+                        "error": "rate limit exceeded",
+                        "detail": f"Quota of {nominal_limit} requests exceeded.",
+                        "retry_after": retry_after,
+                    },
+                    headers=headers,
+                )
+
+            response = await call_next(request)
+            elapsed = time.perf_counter() - start_time
+            REQUEST_COUNT.labels(
+                endpoint=path,
+                status="allowed",
+                algorithm=algorithm_name,
+                tier=tier,
+            ).inc()
+            REQUEST_LATENCY.labels(endpoint=path, status="allowed").observe(elapsed)
+
+            # Attach rate limit headers to all successful/downstream responses
+            try:
+                remaining = await self._safe_remaining(
+                    limiter, client_id, nominal_limit
+                )
+                retry_after = await self._safe_retry_after(limiter, client_id)
+            except Exception:  # noqa: BLE001
+                remaining = nominal_limit
+                retry_after = 0
+
+            response.headers["X-RateLimit-Limit"] = str(nominal_limit)
+            response.headers["X-RateLimit-Remaining"] = str(remaining)
+            response.headers["Retry-After"] = str(retry_after)
+            response.headers["X-RateLimit-Tier"] = tier
+
+            return response
+        finally:
+            ACTIVE_REQUESTS.dec()

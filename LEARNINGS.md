@@ -306,3 +306,54 @@ A structured record of architectural decisions, DSA insights, failure modes, and
   - Created high-resolution comparison charts: `k6_vs_locust_comparison.png` and `soak_test_memory_stability.png`.
   - Added an executive "Key Findings" summary at the top of `BENCHMARKS.md` highlighting the 6 core engineering takeaways.
 - **Status:** Week 9 fully achieved! Ready for Week 10: Observability with Prometheus.
+
+---
+
+## 📅 Week 10 — Observability: Prometheus (Days 57–61)
+
+### Day 57 — Prometheus Fundamentals
+- **Core Primitives Defined:**
+  - **Counter:** A cumulative metric that only increases monotonically (or resets to zero on process restart). *RateFortress Example:* `ratefortress_requests_total` and `ratefortress_blocked_requests_total`.
+  - **Gauge:** A numerical metric that represents a single value that can arbitrarily go up or down. *RateFortress Example:* `ratefortress_active_requests` (measuring concurrent in-flight requests) and memory/pool gauges.
+  - **Histogram:** Samples observations (typically response durations or request sizes) and categorizes them into configurable threshold buckets while maintaining a cumulative `_sum` and `_count`. *RateFortress Example:* `ratefortress_request_latency_seconds` and `ratefortress_limiter_overhead_seconds`.
+- **Why Prometheus Pulls Instead of Applications Pushing:**
+  - *Backpressure Isolation:* If the central monitoring system becomes degraded or slow, a push-based architecture forces the application server to either block its worker threads or buffer metric packets in memory (risking out-of-memory crashes). In a pull model, Prometheus fetches metrics via lightweight HTTP GET requests on its own schedule. If Prometheus is slow, the application is unaffected.
+  - *Decoupled Discovery & Multiple Consumers:* Application services don't need to know the IP address, credentials, or topology of the monitoring server. Any Prometheus server (or local debugging scraper) can pull `/metrics` independently without reconfiguring the app.
+  - *Automatic Dead-Man Detection:* If an application instance crashes or stops responding to HTTP scrapes, Prometheus immediately detects `up == 0` without waiting for a push timeout.
+
+### Day 58 — Instrument FastAPI with prometheus-client
+- **Implementation:** Created `src/monitoring/metrics.py` defining central Prometheus collectors and exposed `/metrics` in `src/api/main.py` using `CONTENT_TYPE_LATEST`.
+- **Scrape Verification:** Validated via unit test `tests/test_prometheus_metrics.py`. When hitting `/metrics`, FastAPI returns raw Prometheus time-series with type definitions and HELP metadata.
+
+### Day 59 — Track Request/Block Counters Per User/Algorithm & Latency Histograms
+- **Middleware-Level Auto-Instrumentation:** Integrated telemetry directly into `RateLimitMiddleware.dispatch()`. Every request automatically updates:
+  - `ratefortress_requests_total`: labeled by `endpoint`, `status` ("allowed" vs "blocked"), `algorithm`, and `tier` ("free", "paid", "enterprise", "anonymous").
+  - `ratefortress_blocked_requests_total`: labeled by `endpoint`, `tier`, and `algorithm`.
+  - `ratefortress_limiter_overhead_seconds`: microsecond-precision histogram tracking pure rate-limiter decision time.
+  - `ratefortress_request_latency_seconds`: end-to-end request duration histogram.
+- **Why Labels Matter over Creating Separate Counters Per Combination:**
+  - If we created a separate metric for every permutation (e.g. `requests_test_free_tokenbucket_allowed_total`), we would end up with dozens of rigid metric names.
+  - Using labels on a single unified counter (`ratefortress_requests_total{endpoint=..., status=..., tier=...}`) unlocks powerful PromQL aggregations across arbitrary dimensions:
+    - Sum across all tiers: `sum(rate(ratefortress_requests_total[1m])) by (status)`
+    - Filter by status across all endpoints: `ratefortress_requests_total{status="blocked"}`
+    - Calculate global error/throttle rates without touching application code.
+
+### Day 60 — Prometheus Local Setup via Docker
+- **Scrape Configuration:** Created `monitoring/prometheus.yml` configuring a 5-second scrape interval targeting `host.docker.internal:8000` and `127.0.0.1:8000` with static labels `app="ratefortress"`, `service="api-gateway"`, and `env="production"`.
+- **Target Verification:** Verified that Prometheus server discovers the `/metrics` endpoint with healthy scrape targets.
+
+### Day 61 — Query Metrics with PromQL
+- **What `rate(...[1m])` Computes on a Counter Metric:**
+  - A Counter is a cumulative sum that constantly climbs ($10, 15, 22, 35\dots$). Reading the raw value at time $t$ gives only the total requests since process startup, which tells you nothing about *current traffic intensity*.
+  - `rate(metric[1m])` calculates the per-second average rate of increase over the preceding 60-second sliding time window: $\Delta \text{Value} / \Delta t$.
+  - It also automatically detects and compensates for **counter resets** (e.g., when a server restarts and the counter drops from 100,000 back to 0), calculating the true request rate without negative spikes.
+- **PromQL Query for Blocked Requests for Paid-Tier Users over Last 5 Minutes:**
+  ```promql
+  sum(rate(ratefortress_requests_total{tier="paid", status="blocked"}[5m]))
+  ```
+  Or using the specialized blocked requests counter:
+  ```promql
+  sum(rate(ratefortress_blocked_requests_total{tier="paid"}[5m]))
+  ```
+- **Automated Validation:** Scripted `monitoring/validate_promql_metrics.py` to simulate multi-tier traffic bursts and assert that all required PromQL metric series and label combinations are present in `/metrics`.
+- **Status:** Week 10 Complete! Ready for Week 11: Observability with Grafana, Logs & Tracing.

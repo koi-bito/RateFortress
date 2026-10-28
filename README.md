@@ -39,8 +39,8 @@ ratefortress/
 
 ## 🚦 Status & Milestones
 
-- **Current Status:** Week 9 — Load Testing II (k6), Spike & Soak Testing Complete (Locust vs. k6 Comparison, 1,500 VU Instant Spike Resilience, 34k Request Soak Test Memory Audit & Matplotlib Visualizations) ✅
-- **Next Milestone:** Week 10 — Observability: Prometheus (Days 57–61)
+- **Current Status:** Week 10 — Observability: Prometheus Complete (Prometheus Telemetry Instrumentation, Labeled Request & Blocked Counters, Limiter Overhead & Latency Histograms, Scrape Configuration & PromQL Verification) ✅
+- **Next Milestone:** Week 11 — Observability: Grafana, Logs & Tracing (Days 62–66)
 
 ---
 

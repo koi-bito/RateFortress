@@ -39,3 +39,5 @@ fakeredis==2.40.0
 lupa==2.8
 locust==2.47.0
 matplotlib==3.11.2
+prometheus-client==0.26.0
+
