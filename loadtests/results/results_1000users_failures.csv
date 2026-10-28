@@ -1,0 +1,4 @@
+Method,Name,Error,Occurrences,First Seen,Last Seen
+GET,/api/expensive-endpoint,CatchResponseError('Unexpected status code: 0'),35,2026-10-28T20:03:58Z,2026-10-28T20:04:02Z
+GET,/api/test,CatchResponseError('Unexpected status code: 0'),103,2026-10-28T20:03:58Z,2026-10-28T20:04:02Z
+GET,/health,CatchResponseError('Health check failed with 0'),4,2026-10-28T20:03:59Z,2026-10-28T20:04:02Z

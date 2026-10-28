@@ -109,3 +109,35 @@ Redis executes Lua scripts atomically in its single-threaded event loop. When `r
 - `ZADD` (conditional member insertion), and
 - `EXPIRE` (TTL refresh)
 all execute uninterrupted as a single atomic unit. No other client command can interleave mid-script. As demonstrated in `test_redis_concurrency.py`, exactly 10 requests are allowed and 40 are blocked across 100% of test runs.
+
+---
+
+## 🚀 Round 4: Production Load Testing with Locust (Days 46–50)
+
+Tested via `loadtests/run_load_tests.py` using Locust 2.47.0 across multi-tenant API traffic:
+- **Test Scenarios:** 10, 100, 500 (Sync vs Async Redis), 1000, and 1500 concurrent simulated users.
+- **Client Traffic Mix:** Multi-tier mix with standard think time (100ms–500ms), hitting Token Bucket (`/api/test`), Sliding Window Log (`/api/expensive-endpoint`), and health check (`/health`) with Free, Paid, Enterprise, and Anonymous API keys.
+- **Target Gateway:** FastAPI ASGI gateway managed by Uvicorn.
+
+### Empirical Load Test Matrix
+
+| Concurrency Tier | Architecture / Backend | Throughput (req/s) | p50 Median (ms) | p95 Latency (ms) | p99 Latency (ms) | Error / Failure Rate (%) | Performance Status |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **10 Users** (Day 46) | In-Memory Baseline | **26.6 req/s** | 2.0 ms | 3.0 ms | 5.0 ms | 0.0% | Ultra-low latency |
+| **100 Users** (Day 47) | In-Memory Baseline | **225.2 req/s** | 2.0 ms | 4.0 ms | 8.0 ms | 0.0% | Steady-state optimal |
+| **500 Users** (Day 48) | **Sync Redis** (Event-Loop Blocking) | **1,065.7 req/s** | 17.0 ms | 57.0 ms | 110.0 ms | 0.0% | Event loop queueing observed |
+| **500 Users** (Day 48) | **Async Redis** (`redis.asyncio`) | **1,080.1 req/s** | **13.0 ms** | **56.0 ms** | **110.0 ms** | 0.0% | **23.5% lower median latency** |
+| **1,000 Users** (Day 49) | Async Redis (`redis.asyncio`) | **1,308.4 req/s** | 120.0 ms | 270.0 ms | 2,200.0 ms | 0.8% | High concurrency plateau |
+| **1,500 Users Stress** (Day 49) | Async Redis (Breaking Point) | **1,420.6 req/s** | 210.0 ms | **2,200.0 ms** | **2,800.0 ms** | **9.9%** | **Capacity Ceiling Exceeded** |
+
+### Key Architectural Takeaways
+
+1. **The Event-Loop Blocking Bottleneck (Day 48):**
+   - Synchronous network I/O (`redis.Redis`) inside an asynchronous framework (`FastAPI`/`Uvicorn`) blocks the entire OS thread of the asyncio event loop while waiting for socket responses.
+   - Migrating rate limiter primitives to `redis.asyncio` (`AsyncRedisTokenBucket`, `AsyncRedisSlidingWindowLog`, etc.) yields a **23.5% reduction in median latency** (13.0ms vs 17.0ms) under 500 concurrent clients, freeing worker threads to interleave non-blocking I/O.
+2. **System Breaking Point Analysis (Day 49):**
+   - The capacity ceiling for a single ASGI Uvicorn worker process on the host hardware occurs between **1,300 and 1,420 req/s**.
+   - At 1,500 concurrent users, connection queue depth in the OS socket backlog saturates, causing p95 latency to exceed 2 seconds and failure rate to reach 9.9% (crossing our 5% failure threshold). In production, horizontal scaling across multiple Uvicorn worker processes and containers behind a load balancer is required to scale beyond 1,400 req/s.
+3. **Artifacts & Charts:**
+   - Visual latency percentiles and throughput comparison chart saved at `loadtests/results/load_test_latency_comparison.png`.
+   - Raw Locust stats, exceptions, and history CSVs saved in `loadtests/results/`.

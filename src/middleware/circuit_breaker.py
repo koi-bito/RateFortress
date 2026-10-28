@@ -88,6 +88,52 @@ class CircuitBreaker:
 
             return effective_fallback
 
+    async def async_call(
+        self, func: Callable, *args, fallback: Any | None = None, **kwargs
+    ) -> Any:
+        """Executes an async coroutine function with circuit breaker protection.
+
+        Args:
+            func: Target async coroutine function to await.
+            fallback: Value returned when circuit is OPEN or func raises an exception.
+                      Defaults to self.fail_open.
+
+        Returns:
+            Result of await func(*args, **kwargs), or fallback if open/failed.
+        """
+        effective_fallback = self.fail_open if fallback is None else fallback
+        now = time.time()
+
+        # Check if open circuit has reached recovery timeout
+        if self.state == self.STATE_OPEN:
+            if self.opened_at is not None and (
+                now - self.opened_at > self.recovery_timeout
+            ):
+                self.state = self.STATE_HALF_OPEN
+            else:
+                return effective_fallback
+
+        try:
+            result = await func(*args, **kwargs)
+
+            # Success in half-open state confirms recovery -> reset to closed
+            if self.state == self.STATE_HALF_OPEN:
+                self.state = self.STATE_CLOSED
+                self.failures = 0
+                self.opened_at = None
+
+            return result
+        except Exception:  # noqa: BLE001
+            self.failures += 1
+            if (
+                self.failures >= self.failure_threshold
+                or self.state == self.STATE_HALF_OPEN
+            ):
+                self.state = self.STATE_OPEN
+                self.opened_at = time.time()
+
+            return effective_fallback
+
     def reset(self) -> None:
         """Manually resets the circuit breaker to closed state."""
         self.state = self.STATE_CLOSED

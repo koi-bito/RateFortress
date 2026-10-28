@@ -204,3 +204,60 @@ A structured record of architectural decisions, DSA insights, failure modes, and
 
 ### Day 45 — Week 6–7 Review & Milestone Complete
 - **Milestone Achieved:** Distributed Redis Backend complete! All 5 rate limiting algorithms now run with full multi-instance synchronization, atomic Lua execution, zero race conditions under concurrent load, 100% key TTL coverage, and comprehensive integration testing. Ready for Week 8: Load Testing with Locust.
+
+---
+
+## 📅 Week 8 — Load Testing with Locust (Days 46–51)
+
+### Day 46 — Locust Setup & First Load Test
+- **Locust Setup:** Configured Locust 2.47.0 with headless and web UI execution harnesses. Built `loadtests/locustfile.py` to simulate realistic multi-tenant traffic hitting token bucket endpoints (`/api/test`), sliding window log endpoints (`/api/expensive-endpoint`), and health checks with varying API tier multipliers (Free, Paid, Enterprise, Anonymous IP).
+- **Spawn Rate vs. Number of Users:**
+  - *Number of Users ($U$):* Dictates steady-state concurrency — the total number of simultaneous greenlet/coroutine simulated clients issuing requests in the system.
+  - *Spawn Rate ($R$):* Dictates the acceleration / ramp-up slope (users spawned per second) until peak concurrency $U$ is achieved.
+  - *Why Both Matter:* High user count tests the system's steady-state throughput and connection pool capacity. High spawn rate tests how the system reacts to abrupt traffic spikes (shock resilience). A system might easily handle 500 users ramped up at 10 users/sec, but completely crash under 500 users spawned within 1 second due to socket connection storms, TLS handshake spikes, and thundering-herd Redis cache stampedes.
+
+### Day 47 — Simulate 100 Concurrent Users
+- **Baseline Load Profile:** Executed headless Locust test with 100 concurrent users at spawn rate 10 (`-u 100 -r 10 --run-time 15s`).
+- **Performance Characteristics:**
+  - Throughput: **225.2 req/s**
+  - Latency: **p50 = 2.0 ms**, **p95 = 4.0 ms**, **p99 = 8.0 ms**
+  - Failure Rate: **0.0%**
+- **Artifacts:** Output matrices saved to `loadtests/results/results_100users_stats.csv`. At 100 users, single-process FastAPI with RateFortress middleware operates within optimal sub-millisecond to low-millisecond response latency with zero connection dropouts.
+
+### Day 48 — Simulate 500 Concurrent Users & Async Redis Migration
+- **What "Blocking the Event Loop" Actually Means:**
+  - FastAPI is built on Starlette and Uvicorn, which run an asynchronous event loop on a single operating system thread per worker process.
+  - When synchronous client calls like `redis.Redis.incr()` or `register_script(...)` are invoked inside an ASGI request path, the calling thread halts execution to wait synchronously on operating system socket I/O with Redis.
+  - While that OS thread is blocked waiting for socket bytes, the event loop CANNOT process any other pending tasks, accept new TCP handshakes, or resume other paused coroutines. At 500 concurrent users, requests pile up in the OS network buffer, causing latency to spike exponentially even though Redis server CPU is nearly idle.
+- **Why a Bigger Connection Pool Alone Fails:**
+  - A connection pool manages a pool of open socket descriptors, but if every checkout and query blocks the executing thread, having 100 or 1,000 idle pooled connections does not grant more threads to the single-threaded event loop. The thread still blocks on each query.
+- **Async Redis Remediation:**
+  - Implemented asynchronous rate limiters (`AsyncRedisTokenBucket`, `AsyncRedisSlidingWindowLog`, `AsyncRedisFixedWindow`, `AsyncRedisSlidingWindowCounter`, `AsyncRedisLeakyBucket`) using `redis.asyncio`.
+  - Added async circuit breaker support (`CircuitBreaker.async_call`) and async header inspection in `RateLimitMiddleware`.
+  - **Empirical Proof:** At 500 concurrent users, moving from synchronous Redis to `redis.asyncio` reduced median latency from **17.0 ms down to 13.0 ms** (a **23.5% latency improvement**) while raising throughput to **1,080.1 req/s**.
+
+### Day 49 — Simulate 1000 Concurrent Users & Stress Breaking Point
+- **1,000 Users Scale Test:**
+  - Throughput reached **1,308.4 req/s** with **p50 = 120.0 ms**, **p95 = 270.0 ms**, and **0.8% failure rate**.
+- **Stress Breaking Point Test (1,500 Users, Spawn Rate 250):**
+  - Pushed the gateway to 1,500 concurrent users to identify the system capacity ceiling.
+  - Performance: Throughput saturated at **1,420.6 req/s**, median latency jumped to **210.0 ms**, **p95 latency rose to 2,200.0 ms** (>1s degradation threshold), and failure rate reached **9.9%** (>5% capacity ceiling threshold).
+- **Bottleneck Analysis:**
+  - The breaking point bottleneck was neither Redis nor the rate limiting algorithms (both executed under 100 microseconds).
+  - The actual bottleneck was the single-process ASGI event loop / Uvicorn worker thread and the OS TCP accept backlog. At 1,400+ req/s, the rate of incoming HTTP connection handshakes and HTTP frame deserialization saturated the single Python CPU core. In production, scaling past 1,400 req/s requires horizontal scaling via multiple Uvicorn worker processes (`uvicorn --workers N`) behind a multi-core reverse proxy (Nginx / Envoy / AWS ALB).
+
+### Day 50 — Document Latency & Benchmarking Matrix
+- **Benchmark Artifacts Created:**
+  - Full load test comparison matrix added to `BENCHMARKS.md` covering 10, 100, 500 (sync vs async), 1,000, and 1,500 concurrent users.
+  - Scripted `loadtests/run_load_tests.py` with automated chart generation using matplotlib.
+  - Generated visual latency and throughput bar charts at `loadtests/results/load_test_latency_comparison.png`.
+
+### Day 51 — DSA Practice Day: Queues & Concurrency
+- **Problems Solved in `src/dsa/concurrency_queues.py` & Tested in `tests/test_dsa_week8.py`:**
+  1. *MyCircularQueue (LeetCode #622):* Implemented a zero-allocation ring buffer using a fixed list and modular head/tail pointers, guaranteeing strict $O(1)$ operations with zero garbage collection overhead.
+  2. *BoundedBlockingQueue (LeetCode #1188):* Implemented a thread-safe bounded queue using `threading.Lock` and two `threading.Condition` variables (`not_full`, `not_empty`), managing synchronized producer-consumer backpressure.
+  3. *RecentCounter (LeetCode #933):* Implemented a sliding window timestamp queue with amortized $O(1)$ window eviction.
+- **Bounded Blocking Queues and API Capacity Breaking Points:**
+  - A bounded blocking queue directly models how an API gateway handles incoming request traffic under load. When downstream workers are saturated, incoming requests can only be buffered up to a fixed bound (queue capacity).
+  - If a queue is unbounded, traffic bursts cause unbounded queue growth, memory exhaustion, and latency inflation (bufferbloat) where requests sit in queue longer than client HTTP timeouts.
+  - When the bounded queue fills up, the system must immediately exert **backpressure** or **fail fast** by shedding load with HTTP 429 (Too Many Requests) or HTTP 503 (Service Unavailable), protecting in-flight requests from catastrophic cascading degradation.

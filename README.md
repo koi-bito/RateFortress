@@ -39,8 +39,8 @@ ratefortress/
 
 ## 🚦 Status & Milestones
 
-- **Current Status:** Week 7 — Distributed Redis Backend Complete (All 5 Algorithms, Atomic Lua Scripts, Race Condition Elimination, Multi-Instance Synchronization & 100% Key TTL Safety) ✅
-- **Next Milestone:** Week 8 — Load Testing with Locust (100–500 concurrent users, throughput ceilings & p95/p99 latency analysis)
+- **Current Status:** Week 8 — Production Load Testing with Locust Complete (10 to 1,500 Concurrent Users, Async Redis Event-Loop Migration, Breaking Point Capacity Ceiling Analysis, Matplotlib Latency Percentiles Chart & DSA Concurrency Queues) ✅
+- **Next Milestone:** Week 9 — Load Testing II (k6), Spike & Soak Testing (Days 52–56)
 
 ---
 
@@ -74,4 +74,10 @@ pytest -v
 
 ```bash
 python benchmarks/run_benchmark.py
+```
+
+### 5. Run Locust Load Testing Suite
+
+```bash
+python loadtests/run_load_tests.py
 ```

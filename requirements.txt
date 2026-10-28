@@ -37,3 +37,5 @@ websockets==17.3
 redis==8.1.0
 fakeredis==2.40.0
 lupa==2.8
+locust==2.47.0
+matplotlib==3.11.2
