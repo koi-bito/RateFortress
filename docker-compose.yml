@@ -112,3 +112,4 @@ volumes:
   prometheus-data:
   grafana-data:
   loki-data:
+

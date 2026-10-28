@@ -82,3 +82,4 @@ def trace_rate_limiter_evaluation(
         span.set_attribute("rate_limit.allowed", outcome.get("allowed", True))
         if outcome.get("remaining", -1) >= 0:
             span.set_attribute("rate_limit.remaining", outcome["remaining"])
+

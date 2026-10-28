@@ -45,3 +45,4 @@ groups:
         annotations:
           summary: "RateFortress gateway target is unreachable"
           description: "Prometheus has failed to scrape RateFortress /metrics for more than 30 seconds."
+

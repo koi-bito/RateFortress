@@ -132,3 +132,4 @@ def test_docker_compose_and_promtail_syntax():
         promtail_data = yaml.safe_load(f)
     assert "clients" in promtail_data
     assert "scrape_configs" in promtail_data
+

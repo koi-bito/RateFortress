@@ -85,3 +85,4 @@ def setup_structured_logging(
 
 # Global structured logger singleton
 app_logger = setup_structured_logging()
+
