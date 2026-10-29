@@ -10,6 +10,11 @@ import pytest
 
 from src.storage.redis_client import get_redis_client
 
+# Ensure tests default to fast isolated execution unless live Redis is targeted
+if not os.getenv("TARGET_LIVE_REDIS"):
+    os.environ["USE_FAKE_REDIS"] = "true"
+
+
 
 @pytest.fixture(autouse=True)
 def configure_test_environment(monkeypatch):

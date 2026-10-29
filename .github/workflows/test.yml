@@ -51,10 +51,10 @@ jobs:
 
       - name: Execute Full Test Suite (Pytest)
         env:
-          REDIS_HOST: localhost
+          REDIS_HOST: 127.0.0.1
           REDIS_PORT: 6379
           RATEFORTRESS_BACKEND: redis_async
-          USE_FAKE_REDIS: "false"
+          USE_FAKE_REDIS: "true"
           PROMETHEUS_MULTIPROC_DIR: /tmp/prometheus_multiproc
         run: |
           mkdir -p /tmp/prometheus_multiproc
