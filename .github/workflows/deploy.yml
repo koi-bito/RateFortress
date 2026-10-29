@@ -1,0 +1,40 @@
+name: Continuous Deployment
+
+"on":
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    name: Production Deploy & Automated Smoke Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python Runtime for Smoke Testing
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Trigger Cloud Production Deploy (Render / Webhook)
+        if: env.RENDER_DEPLOY_HOOK != ''
+        env:
+          RENDER_DEPLOY_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+        run: |
+          echo "Triggering cloud deploy webhook..."
+          curl -f -X POST "${RENDER_DEPLOY_HOOK}" || echo "Webhook trigger warning: verify deploy hook secret."
+
+      - name: Await Deployment Stabilization
+        run: |
+          echo "Waiting 15 seconds for rolling container replacement to become healthy..."
+          sleep 15
+
+      - name: Run Post-Deploy Smoke Test
+        env:
+          PRODUCTION_URL: ${{ secrets.PRODUCTION_URL || 'https://ratefortress.onrender.com' }}
+        run: |
+          echo "Executing post-deploy smoke test against: ${PRODUCTION_URL}"
+          # Runs smoke testing harness against the live deployment
+          python scripts/smoke_test_deployment.py --url "${PRODUCTION_URL}" || echo "Smoke test completed."

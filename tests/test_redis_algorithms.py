@@ -111,6 +111,15 @@ def test_redis_sliding_window_log_headers(redis_client):
     assert limiter.remaining(user) == 5
     assert limiter.is_allowed(user) is True
     assert limiter.remaining(user) == 4
+    # When quota remains, retry_after is 0 (RFC compliance)
+    assert limiter.retry_after(user) == 0
+
+    # Exhaust remaining quota
+    for _ in range(4):
+        assert limiter.is_allowed(user) is True
+    assert limiter.is_allowed(user) is False
+
+    # When blocked, retry_after is positive (time until oldest entry in window expires)
     retry = limiter.retry_after(user)
     assert 1 <= retry <= 10
 

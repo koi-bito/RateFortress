@@ -83,7 +83,7 @@ def main():
         (py_fixed, "Pure Python Fixed Window"),
         (redis_fixed, "Redis Fixed Window (INCR/EXPIRE)"),
         (py_swc, "Pure Python Sliding Window Counter"),
-        (redis_swc, "Redis Sliding Window Counter (Pipeline)"),
+        (redis_swc, "Redis Sliding Window Counter (Atomic Lua)"),
         (py_swl, "Pure Python Sliding Window Log"),
         (redis_swl, "Redis Sliding Window Log (Atomic Lua)"),
         (py_tb, "Pure Python Token Bucket"),

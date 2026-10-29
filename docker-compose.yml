@@ -16,8 +16,10 @@ services:
       - REDIS_PORT=6379
       - USE_FAKE_REDIS=false
       - LOG_FORMAT=json
+      - PROMETHEUS_MULTIPROC_DIR=/tmp/prometheus_multiproc
     depends_on:
-      - redis
+      redis:
+        condition: service_healthy
     volumes:
       - ./logs:/app/logs
     networks:
@@ -31,6 +33,11 @@ services:
     ports:
       - "6379:6379"
     command: ["redis-server", "--appendonly", "yes", "--maxmemory", "256mb", "--maxmemory-policy", "volatile-lru"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
     volumes:
       - redis-data:/data
     networks:

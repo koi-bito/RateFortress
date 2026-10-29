@@ -8,7 +8,7 @@ import yaml
 from fastapi.testclient import TestClient
 
 from src.api.main import create_app
-from src.monitoring.logging_config import JSONLogFormatter, app_logger
+from src.monitoring.logging_config import JSONLogFormatter
 from src.monitoring.tracing import in_memory_span_exporter
 
 

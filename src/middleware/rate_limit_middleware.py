@@ -138,7 +138,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         return f"ip_{ip}", "anonymous", 1
 
     def _get_limiter_for_route(self, path: str, multiplier: int):
-        rule = self.trie.match(path)
+        rule, matched_pattern = self.trie.match_with_pattern(path)
 
         effective_limit = rule.limit * multiplier
         backend_tag = (
@@ -146,7 +146,11 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             if self.async_redis_client
             else "redis" if self.redis_client else "memory"
         )
-        cache_key = f"{path}:{rule.algorithm}:{effective_limit}:{rule.window_seconds}:{backend_tag}"
+        cache_key = f"{matched_pattern}:{rule.algorithm}:{effective_limit}:{rule.window_seconds}:{backend_tag}"
+
+        # Clean namespace for Redis key scoping
+        clean_ns = matched_pattern.strip("/").replace("/", "_").replace("*", "wildcard") or "root"
+        namespace = f"route_{clean_ns}"
 
         if cache_key not in self._limiter_cache:
             if self.async_redis_client:
@@ -155,18 +159,21 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                         self.async_redis_client,
                         limit=effective_limit,
                         window_seconds=rule.window_seconds,
+                        namespace=namespace,
                     )
                 elif rule.algorithm == "sliding_window_log":
                     limiter = AsyncRedisSlidingWindowLog(
                         self.async_redis_client,
                         limit=effective_limit,
                         window_seconds=rule.window_seconds,
+                        namespace=namespace,
                     )
                 elif rule.algorithm == "sliding_window_counter":
                     limiter = AsyncRedisSlidingWindowCounter(
                         self.async_redis_client,
                         limit=effective_limit,
                         window_seconds=rule.window_seconds,
+                        namespace=namespace,
                     )
                 elif rule.algorithm == "leaky_bucket":
                     leak_rate = effective_limit / rule.window_seconds
@@ -174,6 +181,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                         self.async_redis_client,
                         capacity=effective_limit,
                         leak_rate_per_sec=leak_rate,
+                        namespace=namespace,
                     )
                 else:  # default token_bucket
                     refill_rate = effective_limit / rule.window_seconds
@@ -181,6 +189,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                         self.async_redis_client,
                         capacity=effective_limit,
                         refill_rate_per_sec=refill_rate,
+                        namespace=namespace,
                     )
             elif self.redis_client:
                 if rule.algorithm == "fixed_window":
@@ -188,18 +197,21 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                         self.redis_client,
                         limit=effective_limit,
                         window_seconds=rule.window_seconds,
+                        namespace=namespace,
                     )
                 elif rule.algorithm == "sliding_window_log":
                     limiter = RedisSlidingWindowLog(
                         self.redis_client,
                         limit=effective_limit,
                         window_seconds=rule.window_seconds,
+                        namespace=namespace,
                     )
                 elif rule.algorithm == "sliding_window_counter":
                     limiter = RedisSlidingWindowCounter(
                         self.redis_client,
                         limit=effective_limit,
                         window_seconds=rule.window_seconds,
+                        namespace=namespace,
                     )
                 elif rule.algorithm == "leaky_bucket":
                     leak_rate = effective_limit / rule.window_seconds
@@ -207,6 +219,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                         self.redis_client,
                         capacity=effective_limit,
                         leak_rate_per_sec=leak_rate,
+                        namespace=namespace,
                     )
                 else:  # default token_bucket
                     refill_rate = effective_limit / rule.window_seconds
@@ -214,6 +227,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                         self.redis_client,
                         capacity=effective_limit,
                         refill_rate_per_sec=refill_rate,
+                        namespace=namespace,
                     )
             else:
                 if rule.algorithm == "fixed_window":
@@ -270,8 +284,8 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
         path = request.url.path
 
-        # Telemetry / metrics endpoint bypasses rate limiting
-        if path == "/metrics":
+        # Telemetry and administrative comparison endpoints bypass rate limiting
+        if path in ("/metrics", "/compare"):
             return await call_next(request)
 
         request_id = request.headers.get("x-request-id") or str(uuid.uuid4())
@@ -373,14 +387,15 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                 remaining = await self._safe_remaining(
                     limiter, client_id, nominal_limit
                 )
-                retry_after = await self._safe_retry_after(limiter, client_id)
             except Exception:  # noqa: BLE001
                 remaining = nominal_limit
-                retry_after = 0
 
             response.headers["X-RateLimit-Limit"] = str(nominal_limit)
             response.headers["X-RateLimit-Remaining"] = str(remaining)
-            response.headers["Retry-After"] = str(retry_after)
+            # RFC 6585: Retry-After is reserved for 429 / 503 responses (or when remaining quota is exhausted)
+            if remaining == 0:
+                retry_after = await self._safe_retry_after(limiter, client_id)
+                response.headers["Retry-After"] = str(retry_after)
             response.headers["X-RateLimit-Tier"] = tier
             response.headers["X-Request-ID"] = request_id
 

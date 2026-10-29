@@ -29,8 +29,8 @@ def test_sliding_window_counter_key_has_ttl(redis_client):
     user = "ttl_rswc"
     limiter.is_allowed(user)
 
-    # Key is swc:{user}:{current_id}
-    keys = redis_client.keys(f"swc:{user}:*")
+    # Key is swc:{namespace}:{user}:{current_id}
+    keys = redis_client.keys(f"swc:*{user}:*")
     assert len(keys) == 1
     key = keys[0]
 

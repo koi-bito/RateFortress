@@ -11,10 +11,17 @@ from typing import Any
 class AsyncRedisFixedWindow:
     """Non-blocking Fixed Window Counter backed by redis.asyncio."""
 
-    def __init__(self, redis_client: Any, limit: int, window_seconds: int):
+    def __init__(
+        self,
+        redis_client: Any,
+        limit: int,
+        window_seconds: int,
+        namespace: str = "default",
+    ):
         self.r = redis_client
         self.limit = limit
         self.window_seconds = window_seconds
+        self.namespace = namespace
 
     def _get_window_info(self, now: float | None = None):
         if now is None:
@@ -25,7 +32,7 @@ class AsyncRedisFixedWindow:
         return current_window, retry_seconds
 
     def _key(self, user_id: str, current_window: int) -> str:
-        return f"fixed_window:{user_id}:{current_window}"
+        return f"fixed_window:{self.namespace}:{user_id}:{current_window}"
 
     async def is_allowed(self, user_id: str) -> bool:
         """Determines if a request from user_id is permitted in the current window."""

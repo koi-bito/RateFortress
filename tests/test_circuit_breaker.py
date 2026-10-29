@@ -87,3 +87,64 @@ def test_failed_probe_in_half_open_reopens_immediately():
     with patch("time.time", return_value=106.0):
         cb.call(failing_call)
         assert cb.is_open
+
+
+def test_interleaved_failures_and_successes_reset_count_while_closed():
+    """Verifies that successes in STATE_CLOSED reset failure count, preventing sporadic errors from tripping the breaker."""
+    cb = CircuitBreaker(failure_threshold=3, recovery_timeout=10.0, fail_open=True)
+
+    def failing_call():
+        raise ConnectionError("Intermittent network glitch")
+
+    def successful_call():
+        return "ok"
+
+    # Simulate 20 iterations where 2 failures occur, followed by a success.
+    # Total failures = 40, but never 3 consecutive failures.
+    for i in range(20):
+        # 1st failure -> failures = 1
+        assert cb.call(failing_call) is True
+        assert cb.failures == 1
+        assert cb.is_closed
+
+        # 2nd failure -> failures = 2
+        assert cb.call(failing_call) is True
+        assert cb.failures == 2
+        assert cb.is_closed
+
+        # Success -> failures MUST reset to 0
+        assert cb.call(successful_call) == "ok"
+        assert cb.failures == 0, f"Expected failures to reset to 0 on success at iteration {i}, got {cb.failures}"
+        assert cb.is_closed
+
+    # Circuit breaker remained CLOSED across all 60 calls despite 40 total failures!
+    assert cb.is_closed
+    assert cb.failures == 0
+
+
+import pytest
+
+
+@pytest.mark.asyncio
+async def test_async_interleaved_failures_and_successes_reset_count():
+    """Async variant: proves successes in STATE_CLOSED reset failures on async_call."""
+    cb = CircuitBreaker(failure_threshold=3, recovery_timeout=10.0, fail_open=True)
+
+    async def async_failing():
+        raise ConnectionError("Async glitch")
+
+    async def async_success():
+        return "async_ok"
+
+    for _ in range(10):
+        await cb.async_call(async_failing)
+        assert cb.failures == 1
+        await cb.async_call(async_failing)
+        assert cb.failures == 2
+        res = await cb.async_call(async_success)
+        assert res == "async_ok"
+        assert cb.failures == 0
+        assert cb.is_closed
+
+    assert cb.is_closed
+

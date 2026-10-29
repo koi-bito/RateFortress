@@ -8,4 +8,5 @@ ratefortress_env/
 .ruff_cache/
 loadtests/bin/
 *.exe
+.agents/
 

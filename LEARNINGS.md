@@ -413,3 +413,166 @@ A structured record of architectural decisions, DSA insights, failure modes, and
   - `RateFortressGatewayDown`: Pager alert if Prometheus fails to scrape `/metrics` for >30 seconds.
 - **Test Validation:** Created `tests/test_observability_week11.py` validating JSON log formatting, OpenTelemetry span creation, alert rules YAML schema, Docker Compose definitions, and Grafana dashboard validity. All **112 tests passing**.
 - **Status:** Week 11 Complete! Full Observability Stack (Metrics + Logs + Tracing + Dashboards + Alerts) achieved. Ready for Week 12: Algorithm Comparison Engine.
+
+---
+
+## ⚖️ Week 12 — Algorithm Comparison Engine (Days 67–71)
+
+### Day 67 — Designing the `/compare` Response Contract First
+- **Why Design the Response Schema BEFORE Writing Endpoint Logic?**
+  1. **Enforces Intentional API Contracts:** Designing schema first defines the exact questions the endpoint is expected to answer (scenario parameters, allowed vs. blocked counts, percentile latency, qualitative tradeoffs, and empirical fairness bias) without leaking internal class representations or storage mechanics.
+  2. **Decouples Producer from Consumer:** Both frontend engineers (or HTML template developers) and backend simulation writers can develop concurrently against a stable JSON contract.
+  3. **Guarantees Comparability:** Standardizing the output structure ensures all five distinct algorithms are evaluated against identical metric keys (`allowed`, `blocked`, `allowed_pct`, `blocked_pct`, `avg_latency_ms`), preventing algorithm-specific quirks from distorting the report.
+
+### Day 68 — Multi-Algorithm Simulation Engine (`src/api/compare.py`)
+- **Isolated Virtual Time Execution:**
+  - Built `VirtualClock` replacing `time.time()` inside an isolated `unittest.mock.patch` context during simulation.
+  - Generates synthetic request streams across $N$ users and $M$ requests/user within a configurable time envelope $[0, W]$.
+  - Runs pure-Python implementations of all 5 core algorithms (`FixedWindowCounter`, `SlidingWindowLog`, `SlidingWindowCounter`, `TokenBucket`, and `LeakyBucket`) in microsecond-scale execution without wall-clock sleeping.
+  - High-precision per-call decision overhead is captured via `time.perf_counter()`.
+
+### Day 69 — Qualitative Tradeoff Matrix & Single-Scenario Best Choices
+- **Algorithmic Best-Choice Scenarios (In One Sentence Each):**
+  - **Fixed Window Counter:** The best choice for massive-scale public rate limiting (e.g. 5,000 req/day per IP) where minimal CPU/RAM footprint ($O(1)$) across tens of millions of keys is paramount and occasional boundary bursts will not destabilize downstream backends.
+  - **Sliding Window Log:** The best choice for security-critical, low-frequency endpoints (e.g. login authentication, password reset, payment auth, OTP verification) where mathematical precision and 0% rate-limit leakage are non-negotiable and request volumes are low enough to keep $O(N)$ RAM bounded.
+  - **Sliding Window Counter:** The best choice for general-purpose high-throughput SaaS REST APIs (e.g. Cloudflare-style edge protection) that demand rolling window protection without the prohibitive memory costs of storing timestamp arrays.
+  - **Token Bucket:** The best choice for developer-facing platform APIs, CLI tools, and webhooks where clients naturally perform bursty batch operations (e.g., initial page load fetching 15 parallel assets) followed by prolonged idle reading periods.
+  - **Leaky Bucket:** The best choice for ingestion gateways fronting fragile or slow backend resources (e.g. legacy enterprise databases, third-party payment webhooks, heavy PDF workers) that collapse under instantaneous traffic surges and require perfectly smoothed, constant-rate outflow.
+- **Documentation:** Created `docs/tradeoffs.md` establishing the definitive cross-algorithm trade-off evaluation matrix.
+
+### Day 70 — Fairness Simulation: Bursty vs. Steady Clients
+- **Empirical Findings from Skewed Traffic (80% Steady / 20% Bursty):**
+  - **Token Bucket** significantly favors bursty clients: clients who sit idle accumulate tokens up to capacity $B$ and can fire rapid bursts without drops, while steady clients consume their tokens incrementally.
+  - **Leaky Bucket** penalizes bursty clients hardest: rapid bursts instantly saturate the buffer queue, triggering immediate HTTP 429 drops for subsequent burst packets, while steady clients pacing at or below leak rate experience 0% drops.
+  - **Sliding Window Log & Counter** enforce uniform continuous envelopes: any burst exceeding the window budget is curtailed regardless of client idle history.
+- **Which Algorithm to Avoid for Fair, Predictable Multi-Tenant Usage:**
+  - Based on empirical measurements rather than just theory, avoid **Fixed Window Counter** and **Token Bucket** if strict fairness and downstream predictability across competing tenants are the primary goals.
+  - *Why:* Fixed Window Counter allows boundary-bursting clients to claim up to $2\times$ their fair quota at window transitions, starving other tenants sharing downstream capacity. Token Bucket permits bursty tenants to flood backend worker pools with sudden request spikes, creating latency degradation for steady tenants who space out their traffic responsibly. For strict tenant equity and predictable system load, **Sliding Window Counter** or **Leaky Bucket** should be chosen.
+
+### Day 71 — Content Negotiation & Jinja2 HTML Presentation
+- **Dual Representation (`Accept: text/html` vs `application/json`):**
+  - Implemented dynamic content negotiation: visiting `/compare` in a web browser renders `templates/compare.html`, while programmatic API clients receive structured JSON.
+  - HTML dashboard features responsive CSS cards, scenario configuration controls, allowed/blocked progress visualizations, latency microsecond badges, and deep-dive tradeoff cards.
+  - Created `tests/test_compare_engine.py` verifying JSON schemas, HTML rendering, parameter boundary validation, traffic distribution sorting, and documentation consistency. All **129 tests passing**.
+- **Status:** Week 12 Complete! Algorithm Comparison Engine deployed and fully operational. Ready for Week 13: Dockerization & Cloud Deployment.
+
+---
+
+## 🚀 Week 13 — Dockerization & Cloud Deployment (Days 72–76)
+
+### Day 72 — Hardened Dockerization & Container Architecture
+- **Container Construction (`Dockerfile`):**
+  - Built an immutable Python 3.13-slim container copying required application packages, templates, monitoring assets, and architectural decision records.
+  - Configured non-blocking container-level `HEALTHCHECK` targeting `http://localhost:8000/health` so orchestrators (Docker Swarm, Kubernetes, AWS ECS, Render) monitor container responsiveness automatically.
+  - Set up `/tmp/prometheus_multiproc` multiprocess metrics directory ensuring Uvicorn multi-worker telemetry aggregates safely.
+
+### Day 73 — Full-Stack Docker Compose Orchestration
+- **Why Reading `REDIS_HOST` from Environment Variables is Better than Hardcoding `localhost`:**
+  1. **Network Topology Agility (The 12-Factor App Principle):** On a developer machine without Docker, Redis runs on `127.0.0.1`. Inside a Docker Compose bridge network, each container has its own network namespace and IP, meaning `localhost` refers to the *container itself* rather than the Redis container; Redis is only reachable via its DNS service name (`redis`). In cloud environments (Render, AWS ElastiCache), Redis runs at a remote hostname or VPC private IP.
+  2. **Zero Code Mutation Across Environments:** Injecting `REDIS_HOST` at runtime means the exact same binary/image runs unchanged in local unit tests, Docker Compose, CI/CD runners, and production clusters.
+  3. **Security & Credential Decoupling:** Isolates hostnames, ports, and authentication passwords outside version control, allowing secret rotation without rebuilding images.
+
+### Day 74 — Cloud Hosting Selection & Architecture Tradeoffs
+- **Host Selection & Deciding Factors:**
+  - **Selected Primary Option:** **Render.com** (via Infrastructure-as-Code `render.yaml`) paired with dedicated **AWS EC2** documentation for enterprise environments.
+  - **Deciding Factors:**
+    - *Ease of Setup vs. Maintenance Overhead:* Render offers declarative Infrastructure-as-Code via Blueprint (`render.yaml`) with native private Redis VPC networking, automatic HTTPS/TLS certificate provisioning, and zero-downtime rolling deployments out-of-the-box.
+    - *Resume & Engineering Value:* Documenting both managed PaaS (Render / Railway) and raw IaaS (AWS EC2 with Ubuntu 24.04 LTS, Docker Compose systemd unit files, and Nginx reverse proxy) demonstrates competency across both rapid startup shipping and enterprise production operations.
+
+### Day 75 — Secrets Management & Environment Configuration
+- **Production Secrets Isolation:**
+  - Standardized runtime configuration via environment variables: `RATEFORTRESS_BACKEND=redis_async`, `REDIS_HOST`, `REDIS_PORT`, `REDIS_PASSWORD`, `USE_FAKE_REDIS=false`, and `LOG_FORMAT=json`.
+  - Authored `docs/cloud_deployment_guide.md` specifying VPC private security group rules, preventing Redis exposure to the public internet (`ipAllowList: []`).
+
+### Day 76 — Automated Deployment Smoke Testing
+- **Production Smoke Test Harness (`scripts/smoke_test_deployment.py`):**
+  - Built an automated end-to-end verification script with zero third-party dependencies (runs on pure Python `urllib`).
+  - Verifies `/health` (HTTP 200), `/` (metadata), `/metrics` (Prometheus text format), `/compare` (5 algorithms structured JSON and HTML template), and active rate limiting enforcement on `/api/test` (confirming HTTP 429 with standard `Retry-After` headers).
+  - Created `tests/test_deployment_week13.py` with 6 automated tests validating Dockerfile instructions, Compose service topologies, Render blueprints, Railway configs, and deployment guides. All **135 tests passing**.
+- **Status:** Week 13 Complete! Dockerization & Cloud Deployment infrastructure operational and verified. Ready for Week 14: CI/CD, Blue-Green Deploys & Rollback.
+
+---
+
+## 🔄 Week 14 — CI/CD, Blue-Green Deploys & Rollback (Days 77–81)
+
+### Day 77 — Continuous Integration with Real Redis Services
+- **Why Run Tests Against a Real Redis Service Container in CI Rather Than Mocking?**
+  1. **Lua Script Execution Parity:** Fakes and in-memory mocks (like `fakeredis`) approximate basic key-value operations, but complex custom Lua scripts (`redis_sliding_window_log.lua`, `redis_sliding_window_counter.lua`, `redis_token_bucket.lua`, `redis_leaky_bucket.lua`) rely on exact Redis C-runtime semantics, SHA1 script caching (`EVALSHA`), and atomic sorted set boundary eviction. Mocks can falsely pass while failing on a live Redis engine.
+  2. **Socket Timeouts & Connection Pool Concurrency:** Live Redis exposes real async socket connection pooling, TCP connection lifecycles, and concurrency races under multi-threaded test runners that purely in-memory mocks cannot reproduce.
+  3. **Confidence in Production Parity:** Testing against the exact `redis:7.2-alpine` container running in production guarantees zero runtime surprises upon deployment.
+
+### Day 78 — Automated Continuous Deployment on Push
+- **Pipeline Automation (`.github/workflows/deploy.yml`):**
+  - Configured automated deployment trigger on `main` branch merges guarded by test suite passage (`needs: test`).
+  - Integrated zero-downtime deploy webhook triggering cloud container rolling replacement, followed by automated post-deployment smoke testing via `scripts/smoke_test_deployment.py`.
+
+### Day 79 — Blue-Green Zero-Downtime Deployment
+- **Why Blue-Green Deployment is Specifically Valuable for a Rate Limiter:**
+  - **In-Flight Quota Preservation:** If you perform a hard restart (in-place stop and start) on an API gateway:
+    1. Active HTTP connections are severed mid-flight, returning connection resets (TCP RST) or HTTP 502 Bad Gateway to clients.
+    2. Any local in-memory sliding window state, circuit breaker counts, or cached API key tokens are wiped out, resetting rate-limiting counters to zero and causing a massive "cold-start burst" where abusive clients can bypass limits.
+  - **Zero-Downtime Traffic Handover:** With blue-green deployment, both Blue and Green connect to the same external distributed Redis backend. The new candidate (Green) warms up, validates its connection pools, and passes readiness checks *before* the router flips the traffic pointer. In-flight requests on Blue drain gracefully, ensuring 0 dropped requests and 0 quota resets.
+
+### Day 80 — Incident Drill & Production Rollback Runbook
+- **Rollback Drill Observations:**
+  - *Slowest Part of Drill:* Image rebuild time if attempting to fix forward with a code patch (takes 2–3 minutes for Docker build, dependency resolution, and test runs).
+  - *Mitigation & Setup Change:* Pre-tagging immutable container releases (`v-stable-1`) and maintaining an instant router traffic switch (`scripts/blue_green_deploy.py`) reduces MTTR from minutes to **< 1 second**, decoupling the rollback from CI build pipelines.
+  - *Runbook Creation:* Created `docs/runbook.md` documenting severity tiers (P1/P2/P3), cloud rollback commands, Redis disaster recovery (selective key purging), and post-incident verification checklists.
+
+### Day 81 — Pipeline Review & Production Badges
+- **Repository Professionalization:**
+  - Added CI build status badge to `README.md`.
+  - Created `tests/test_cicd_week14.py` verifying GitHub Actions workflow syntax, Blue-Green router state transitions, cutover traffic continuity, and runbook completeness. All **140 tests passing**.
+- **Status:** Week 14 Complete! CI/CD, Blue-Green zero-downtime cutover, and incident rollback procedures fully operational. Ready for Week 15: Documentation, Demo, Interview Prep & Resume Bullet.
+
+---
+
+## 🎓 Week 15 — Documentation, Demo, Interview Prep & Resume Bullet (Days 82–86)
+
+### Day 82 — End-to-End System Architecture Diagram
+- **Artifact Generation (`docs/architecture.svg`):**
+  - Designed an end-to-end vector architecture diagram illustrating the request lifecycle across all six foundational layers:
+    1. *Client Ingress Layer:* HTTP requests, headers (`X-API-Key`, `X-Forwarded-For`), client identification.
+    2. *FastAPI Gateway & RateLimit Middleware:* Endpoint Trie prefix matching, tier multiplier calculations (Free 1x, Paid 10x, Enterprise 50x), and CircuitBreaker fail-open fallback.
+    3. *Pluggable Algorithm Engine:* Execution paths for Fixed Window, Sliding Window Log, Sliding Window Counter, Token Bucket, and Leaky Bucket in both synchronous and asynchronous modes.
+    4. *Redis 7 Storage & Atomicity Layer:* Atomic Lua scripts (`redis_sliding_window_log.lua`, `redis_sliding_window_counter.lua`, `redis_token_bucket.lua`, `redis_leaky_bucket.lua`) with `volatile-lru` TTL-bounded eviction.
+    5. *Observability Stack:* Prometheus `/metrics` scraping, live Grafana dashboards, Loki structured JSON logging via Promtail, and OpenTelemetry tracing.
+    6. *Client Response Stream:* HTTP 200 OK with standard headers (`X-RateLimit-Limit`, `Remaining`, `Reset`) vs. HTTP 429 Too Many Requests with `Retry-After`.
+
+### Day 83 — Recruiter-Ready README & 60-Second Comprehension
+- **Packaging the Repository (`README.md`):**
+  - Restructured the primary repository documentation around recruiter comprehension:
+    - Live badges for CI/CD test status, MIT license, Python versions (3.11-3.13), and Redis 7.2.
+    - Embedded `docs/architecture.svg` at the top of the README for instant visual architecture ingestion.
+    - Empirical benchmark summary table comparing throughput and 50-thread concurrent stress test results.
+    - Interactive quickstart commands for running the full Docker Compose stack, executing the `/compare` engine, and running live smoke tests.
+    - Explicit section on **Known Limitations & Future Roadmap** (single-region Redis vs. multi-datacenter CRDT replication).
+
+### Day 84 — Video Demo Walkthrough & Public Launch
+- **Launch Documentation (`docs/demo_script_and_walkthrough.md`):**
+  - Scripted a 2.5-minute timecoded demo presentation:
+    - *0:00–0:30:* Problem statement, naive rate-limiter pitfalls (boundary bursts and check-and-set races), and RateFortress overview.
+    - *0:30–1:15:* Live `/compare` engine demonstration showing how Token Bucket accommodates client bursts while Leaky Bucket shapes smooth downstream traffic.
+    - *1:15–1:55:* Live Grafana observability dashboard metrics under active Locust load testing surge.
+    - *1:55–2:30:* CI/CD test matrix verification and Blue-Green zero-downtime cutover demonstration.
+  - Drafted an engineering-focused LinkedIn launch post detailing the hardest technical hurdle: solving the sorted set check-and-set race condition under concurrent load via custom atomic Lua scripts.
+
+### Day 85 — System Design Mock Interview Prep & Technical Defense
+- **Interview Defense Guide (`docs/interview_prep_and_defense.md`):**
+  - Formulated 60-second elevator pitches and rigorous verbal defenses for core systems engineering questions:
+    1. *Concurrency Race Conditions:* Why separate Redis `ZCARD` + `ZADD` calls leak 150% over-admission under load, and how atomic Lua scripting on Redis's single-threaded event loop guarantees strict 0% over-admission.
+    2. *Backend Outages:* How the fail-open Circuit Breaker pattern prevents Redis outages from taking down client-facing APIs.
+    3. *Algorithm Selection Tradeoffs:* Why Token Bucket is the premier default for web APIs (burst tolerance decoupled from sustained rate) compared to Leaky Bucket, Sliding Window Log ($O(N)$ RAM bloat), and Sliding Window Counter ($O(1)$ RAM sweet spot).
+    4. *Distributed Horizontal Scaling:* Consistent hashing with virtual nodes across Redis clusters and regional local quota partitioning for multi-datacenter active-active deployments.
+    5. *Blue-Green Deployment Value:* Preserving in-flight rate limit counters and connection pools during releases to prevent cold-start burst abuse.
+
+### Day 86 — Code Quality Audit & High-Impact Resume Bullets
+- **Codebase Polish:**
+  - Audited all modules in `src/`, `tests/`, `scripts/`, `loadtests/`, and `monitoring/`: verified type hints, docstring coverage, and absence of stray debug prints or orphaned TODO comments.
+  - Ruff static analysis verified clean across all directories.
+- **Resume Bullets Formulated:**
+  - *Backend / Distributed Systems Role:*
+    > Built and open-sourced **RateFortress**, a distributed rate limiting engine in Python and Redis implementing 5 algorithms (Token Bucket, Leaky Bucket, Sliding Window Log/Counter, Fixed Window); authored atomic Lua scripts to eliminate check-and-set concurrency race conditions under 50-thread stress tests (0% over-admission), benchmarked to 43,000+ req/s, and integrated fail-open circuit breakers.
+  - *Platform / DevOps Role:*
+    > Architected an observable API rate-limiting gateway in FastAPI with Prometheus metrics, live Grafana dashboards, Loki structured JSON logging, and OpenTelemetry tracing; orchestrated multi-container stacks via Docker Compose, configured multi-version GitHub Actions CI/CD with live Redis service containers, and authored automated zero-downtime Blue-Green deployment and rollback runbooks.
+- **Milestone Reached:** 🎉 **Core 15-Week Foundation & Production Stack Complete!** All 140 automated tests passing with zero failures. Ready for Weeks 16–20: Research Layer & Optional Extensions.

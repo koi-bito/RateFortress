@@ -57,7 +57,7 @@ def start_server(backend: str = "redis_async", port: int = 8000) -> subprocess.P
     env = os.environ.copy()
     env["RATEFORTRESS_BACKEND"] = backend
     env["PYTHONPATH"] = str(BASE_DIR)
-    env["USE_FAKE_REDIS"] = "true"
+    env["USE_FAKE_REDIS"] = os.getenv("USE_FAKE_REDIS", "true")
 
     cmd = [
         str(PYTHON_EXE),

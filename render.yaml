@@ -1,0 +1,41 @@
+# RateFortress Cloud Deployment Blueprint (Render.com)
+# Defines production web service container and managed Redis instance with zero-trust network isolation.
+
+services:
+  # 1. RateFortress API Gateway & Rate Limiting Engine
+  - type: web
+    name: ratefortress
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter
+    region: oregon
+    autoDeploy: true
+    healthCheckPath: /health
+    envVars:
+      - key: RATEFORTRESS_BACKEND
+        value: redis_async
+      - key: REDIS_HOST
+        fromService:
+          type: redis
+          name: ratefortress-redis
+          property: host
+      - key: REDIS_PORT
+        fromService:
+          type: redis
+          name: ratefortress-redis
+          property: port
+      - key: USE_FAKE_REDIS
+        value: "false"
+      - key: LOG_FORMAT
+        value: json
+      - key: PORT
+        value: 8000
+
+  # 2. Managed Redis Distributed Storage Backend
+  - type: redis
+    name: ratefortress-redis
+    region: oregon
+    plan: starter
+    ipAllowList: [] # Restricts access exclusively to internal private network
+    maxmemoryPolicy: volatile-lru
+

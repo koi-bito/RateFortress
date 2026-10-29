@@ -9,8 +9,7 @@ import json
 import logging
 import os
 import sys
-import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 
@@ -19,7 +18,7 @@ class JSONLogFormatter(logging.Formatter):
 
     def format(self, record: logging.LogRecord) -> str:
         log_payload = {
-            "timestamp": datetime.fromtimestamp(record.created, tz=timezone.utc).isoformat(),
+            "timestamp": datetime.fromtimestamp(record.created, tz=UTC).isoformat(),
             "level": record.levelname,
             "logger": record.name,
             "service": "ratefortress",
@@ -76,9 +75,8 @@ def setup_structured_logging(
         file_handler = logging.FileHandler(target_dir / "ratefortress.log", encoding="utf-8")
         file_handler.setFormatter(formatter)
         logger.addHandler(file_handler)
-    except Exception:
-        # Non-fatal if filesystem is read-only
-        pass
+    except OSError as exc:
+        logger.warning("Could not initialize file log handler in %s: %s", target_dir, exc)
 
     return logger
 

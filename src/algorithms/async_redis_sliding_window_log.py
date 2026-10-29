@@ -15,7 +15,13 @@ LUA_SCRIPT_PATH = Path(__file__).parent / "redis_sliding_window_log.lua"
 class AsyncRedisSlidingWindowLog:
     """Atomic asynchronous Sliding Window Log rate limiter backed by Redis ZSET."""
 
-    def __init__(self, redis_client: Any, limit: int, window_seconds: int):
+    def __init__(
+        self,
+        redis_client: Any,
+        limit: int,
+        window_seconds: int,
+        namespace: str = "default",
+    ):
         if limit <= 0:
             raise ValueError("Limit must be positive.")
         if window_seconds <= 0:
@@ -24,13 +30,14 @@ class AsyncRedisSlidingWindowLog:
         self.r = redis_client
         self.limit = limit
         self.window_seconds = window_seconds
+        self.namespace = namespace
 
         with open(LUA_SCRIPT_PATH, "r", encoding="utf-8") as f:
             script_content = f.read()
         self._script = self.r.register_script(script_content)
 
     def _key(self, user_id: str) -> str:
-        return f"sliding_log:{user_id}"
+        return f"sliding_log:{self.namespace}:{user_id}"
 
     async def is_allowed(self, user_id: str) -> bool:
         """Determines if a request from user_id is permitted within the sliding window."""

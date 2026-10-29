@@ -38,12 +38,16 @@ end
 local remaining = math.max(0, limit - count)
 
 -- 3. Calculate retry_after seconds based on oldest entry in window
-local oldest = redis.call("ZRANGE", key, 0, 0, "WITHSCORES")
-local retry_after = 1
-if oldest and #oldest >= 2 then
-    local oldest_ts = tonumber(oldest[2])
-    local expires_at = oldest_ts + window
-    retry_after = math.max(1, math.ceil(expires_at - now))
+local retry_after = 0
+if count >= limit then
+    local oldest = redis.call("ZRANGE", key, 0, 0, "WITHSCORES")
+    if oldest and #oldest >= 2 then
+        local oldest_ts = tonumber(oldest[2])
+        local expires_at = oldest_ts + window
+        retry_after = math.max(1, math.ceil(expires_at - now))
+    else
+        retry_after = 1
+    end
 end
 
 -- Return: [allowed (1 or 0), remaining_quota, retry_after_seconds, count]

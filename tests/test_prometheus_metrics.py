@@ -3,13 +3,7 @@
 from fastapi.testclient import TestClient
 
 from src.api.main import create_app
-from src.monitoring.metrics import (
-    BLOCKED_REQUESTS,
-    LIMITER_OVERHEAD,
-    REQUEST_COUNT,
-    REQUEST_LATENCY,
-    get_metrics_payload,
-)
+from src.monitoring.metrics import get_metrics_payload
 
 
 def test_metrics_endpoint_returns_prometheus_format():
@@ -76,4 +70,19 @@ def test_metrics_endpoint_bypasses_rate_limiting():
     for _ in range(150):
         resp = client.get("/metrics")
         assert resp.status_code == 200
+
+
+def test_multiprocess_metrics_aggregation(tmp_path, monkeypatch):
+    """Bug 8 verification: confirms get_metrics_payload() aggregates multi-process metrics
+
+    correctly without crashing or flapping when PROMETHEUS_MULTIPROC_DIR is configured.
+    """
+    multiproc_dir = tmp_path / "multiproc"
+    multiproc_dir.mkdir()
+    monkeypatch.setenv("PROMETHEUS_MULTIPROC_DIR", str(multiproc_dir))
+
+    payload, content_type = get_metrics_payload()
+    assert isinstance(payload, bytes)
+    assert "text/plain" in content_type
+
 

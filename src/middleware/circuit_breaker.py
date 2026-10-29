@@ -75,6 +75,8 @@ class CircuitBreaker:
                 self.state = self.STATE_CLOSED
                 self.failures = 0
                 self.opened_at = None
+            elif self.state == self.STATE_CLOSED:
+                self.failures = 0
 
             return result
         except Exception:  # noqa: BLE001
@@ -121,6 +123,8 @@ class CircuitBreaker:
                 self.state = self.STATE_CLOSED
                 self.failures = 0
                 self.opened_at = None
+            elif self.state == self.STATE_CLOSED:
+                self.failures = 0
 
             return result
         except Exception:  # noqa: BLE001

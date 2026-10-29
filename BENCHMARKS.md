@@ -67,14 +67,14 @@ Tested via `benchmarks/compare_window_boundary.py`:
 
 | Algorithm Implementation | Storage Backend | Atomicity Model | Throughput (req/s) | 50-Thread Concurrent Stress (Limit=10) | Over-Admission Leak? |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **Fixed Window Counter** | Redis (`INCR` + `EXPIRE`) | Redis Atomic `INCR` | **37,877 req/s** | 10 Allowed / 40 Blocked | **Zero (0%)** |
-| **Sliding Window Counter** | Redis (Pipeline `GET` + `INCR`) | Pipeline + App Math | **12,955 req/s** | Statistical bound | Boundary smoothed |
-| **Sliding Window Log (Lua)** | Redis Sorted Set (`ZSET`) | **Atomic Lua Script** | **5,292 req/s** | 10 Allowed / 40 Blocked | **Zero (0%)** |
-| **Token Bucket (Lua)** | Redis Hash (`HMGET`/`HMSET`) | **Atomic Lua Script** | **6,266 req/s** | 10 Allowed / 40 Blocked | **Zero (0%)** |
-| **Leaky Bucket (Lua)** | Redis Hash (`HMGET`/`HMSET`) | **Atomic Lua Script** | **5,919 req/s** | 10 Allowed / 40 Blocked | **Zero (0%)** |
+| **Fixed Window Counter** | Redis (`INCR` + `EXPIRE`) | Redis Atomic `INCR` | **43,334 req/s** | 10 Allowed / 40 Blocked | **Zero (0%)** |
+| **Sliding Window Counter (Lua)** | Redis Key-Value (`GET` + `INCR`) | **Atomic Lua Script** | **7,213 req/s** | 10 Allowed / 40 Blocked | **Zero (0%)** |
+| **Sliding Window Log (Lua)** | Redis Sorted Set (`ZSET`) | **Atomic Lua Script** | **5,858 req/s** | 10 Allowed / 40 Blocked | **Zero (0%)** |
+| **Token Bucket (Lua)** | Redis Hash (`HMGET`/`HMSET`) | **Atomic Lua Script** | **6,533 req/s** | 10 Allowed / 40 Blocked | **Zero (0%)** |
+| **Leaky Bucket (Lua)** | Redis Hash (`HMGET`/`HMSET`) | **Atomic Lua Script** | **6,310 req/s** | 10 Allowed / 40 Blocked | **Zero (0%)** |
 
 ### Concurrency Deep-Dive: Why Lua Scripting Is Required
-Without atomic Lua scripting, Redis sorted set sliding window logs suffer a classic **check-then-insert** race condition. Under a 50-thread concurrent surge, separate `ZCARD` checks observe count $< 10$ before any thread executes `ZADD`, admitting 18 to 25 requests. Executing `ZREMRANGEBYSCORE`, `ZCARD`, `ZADD`, and `EXPIRE` atomically inside `redis_sliding_window_log.lua` guarantees strict 0% over-admission across all concurrent runs.
+Without atomic Lua scripting, Redis rate limiters (such as Sliding Window Log and Sliding Window Counter) suffer classic **check-then-insert** race conditions. Under a 50-thread concurrent surge, separate reads observe count $< 10$ before any thread executes a write, admitting 18 to 25 requests. Consolidating all logic into atomic Lua scripts (`redis_sliding_window_log.lua`, `redis_sliding_window_counter.lua`, `redis_token_bucket.lua`, and `redis_leaky_bucket.lua`) guarantees strict 0% over-admission across all concurrent runs.
 
 ---
 

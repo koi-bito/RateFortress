@@ -15,7 +15,7 @@ def test_root_and_headers_present():
     # Validate rate limit headers exist on standard 200 OK responses
     assert "X-RateLimit-Limit" in response.headers
     assert "X-RateLimit-Remaining" in response.headers
-    assert "Retry-After" in response.headers
+    assert "Retry-After" not in response.headers  # RFC 6585/7231: Retry-After absent on 200 OK
     assert "X-RateLimit-Tier" in response.headers
     assert response.headers["X-RateLimit-Tier"] == "anonymous"
 

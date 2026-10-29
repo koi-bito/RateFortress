@@ -14,7 +14,13 @@ LUA_SCRIPT_PATH = Path(__file__).parent / "redis_token_bucket.lua"
 class AsyncRedisTokenBucket:
     """Distributed asynchronous Token Bucket rate limiter powered by Redis Lua."""
 
-    def __init__(self, redis_client: Any, capacity: int, refill_rate_per_sec: float):
+    def __init__(
+        self,
+        redis_client: Any,
+        capacity: int,
+        refill_rate_per_sec: float,
+        namespace: str = "default",
+    ):
         if capacity <= 0:
             raise ValueError("Capacity must be a positive integer.")
         if refill_rate_per_sec <= 0:
@@ -23,13 +29,14 @@ class AsyncRedisTokenBucket:
         self.r = redis_client
         self.capacity = float(capacity)
         self.refill_rate = float(refill_rate_per_sec)
+        self.namespace = namespace
 
         with open(LUA_SCRIPT_PATH, "r", encoding="utf-8") as f:
             script_content = f.read()
         self._script = self.r.register_script(script_content)
 
     def _key(self, user_id: str) -> str:
-        return f"token_bucket:{user_id}"
+        return f"token_bucket:{self.namespace}:{user_id}"
 
     async def is_allowed(self, user_id: str, tokens: int = 1) -> bool:
         """Evaluates whether user_id is permitted to consume `tokens` asynchronously."""

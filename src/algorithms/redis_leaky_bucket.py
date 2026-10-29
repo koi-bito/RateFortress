@@ -15,7 +15,13 @@ LUA_SCRIPT_PATH = Path(__file__).parent / "redis_leaky_bucket.lua"
 class RedisLeakyBucket:
     """Distributed Leaky Bucket rate limiter powered by Redis and Lua."""
 
-    def __init__(self, redis_client: Any, capacity: int, leak_rate_per_sec: float):
+    def __init__(
+        self,
+        redis_client: Any,
+        capacity: int,
+        leak_rate_per_sec: float,
+        namespace: str = "default",
+    ):
         if capacity <= 0:
             raise ValueError("Capacity must be a positive integer.")
         if leak_rate_per_sec <= 0:
@@ -24,6 +30,7 @@ class RedisLeakyBucket:
         self.r = redis_client
         self.capacity = int(capacity)
         self.leak_rate = float(leak_rate_per_sec)
+        self.namespace = namespace
 
         # Load Lua script and register SHA
         with open(LUA_SCRIPT_PATH, "r", encoding="utf-8") as f:
@@ -31,7 +38,7 @@ class RedisLeakyBucket:
         self._script = self.r.register_script(script_content)
 
     def _key(self, user_id: str) -> str:
-        return f"leaky_bucket:{user_id}"
+        return f"leaky_bucket:{self.namespace}:{user_id}"
 
     def is_allowed(self, user_id: str) -> bool:
         """Determines if a request by user_id fits into the bucket queue."""

@@ -5,16 +5,17 @@ for end-to-end request tracking, rate limiting evaluation overhead, and blocked
 request monitoring across client pricing tiers and algorithms.
 """
 
-import time
-from typing import Any
+import os
 
 from prometheus_client import (
     CONTENT_TYPE_LATEST,
     REGISTRY,
+    CollectorRegistry,
     Counter,
     Gauge,
     Histogram,
     generate_latest,
+    multiprocess,
 )
 
 # 1. Total Requests Counter (labeled by endpoint, status, algorithm, and pricing tier)
@@ -79,6 +80,14 @@ ACTIVE_REQUESTS = Gauge(
 
 
 def get_metrics_payload() -> tuple[bytes, str]:
-    """Generates the latest Prometheus-formatted metrics payload."""
+    """Generates the latest Prometheus-formatted metrics payload.
+
+    If PROMETHEUS_MULTIPROC_DIR is configured, aggregates multi-worker counters.
+    """
+    multiproc_dir = os.getenv("PROMETHEUS_MULTIPROC_DIR")
+    if multiproc_dir and os.path.isdir(multiproc_dir):
+        registry = CollectorRegistry()
+        multiprocess.MultiProcessCollector(registry)
+        return generate_latest(registry), CONTENT_TYPE_LATEST
     return generate_latest(REGISTRY), CONTENT_TYPE_LATEST
 

@@ -1,0 +1,534 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RateFortress — Algorithm Comparison Engine</title>
+    <style>
+        :root {
+            --bg-primary: #0f172a;
+            --bg-secondary: #1e293b;
+            --bg-tertiary: #334155;
+            --text-primary: #f8fafc;
+            --text-secondary: #94a3b8;
+            --text-muted: #64748b;
+            --accent-blue: #38bdf8;
+            --accent-indigo: #818cf8;
+            --accent-green: #34d399;
+            --accent-amber: #fbbf24;
+            --accent-red: #f87171;
+            --border-color: #334155;
+            --card-radius: 10px;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--bg-primary);
+            color: var(--text-primary);
+            line-height: 1.5;
+            padding: 24px;
+        }
+
+        .container {
+            max-width: 1280px;
+            margin: 0 auto;
+        }
+
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding-bottom: 20px;
+            border-bottom: 1px solid var(--border-color);
+            margin-bottom: 24px;
+        }
+
+        .logo-group {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .shield-icon {
+            font-size: 32px;
+        }
+
+        h1 {
+            font-size: 24px;
+            font-weight: 700;
+            color: var(--text-primary);
+            letter-spacing: -0.5px;
+        }
+
+        .subtitle {
+            font-size: 14px;
+            color: var(--text-secondary);
+        }
+
+        .header-links a {
+            color: var(--accent-blue);
+            text-decoration: none;
+            font-size: 14px;
+            margin-left: 16px;
+            font-weight: 500;
+        }
+
+        .header-links a:hover {
+            text-decoration: underline;
+        }
+
+        /* Control Form Card */
+        .card {
+            background-color: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: var(--card-radius);
+            padding: 20px;
+            margin-bottom: 24px;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.2);
+        }
+
+        .card-title {
+            font-size: 16px;
+            font-weight: 600;
+            color: var(--accent-blue);
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .form-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 16px;
+            align-items: end;
+        }
+
+        .form-group {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        label {
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--text-secondary);
+        }
+
+        input[type="number"], select {
+            background-color: var(--bg-tertiary);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            color: var(--text-primary);
+            padding: 8px 12px;
+            font-size: 14px;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+
+        input[type="number"]:focus, select:focus {
+            border-color: var(--accent-blue);
+        }
+
+        .btn-submit {
+            background: linear-gradient(135deg, #2563eb, #38bdf8);
+            color: #ffffff;
+            border: none;
+            border-radius: 6px;
+            padding: 10px 18px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: opacity 0.2s, transform 0.1s;
+            height: 38px;
+        }
+
+        .btn-submit:hover {
+            opacity: 0.92;
+        }
+
+        .btn-submit:active {
+            transform: scale(0.98);
+        }
+
+        /* Metric Badges */
+        .metrics-summary {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 14px;
+            margin-bottom: 24px;
+        }
+
+        .metric-box {
+            background-color: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: var(--card-radius);
+            padding: 14px 18px;
+        }
+
+        .metric-label {
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            color: var(--text-muted);
+            letter-spacing: 0.5px;
+        }
+
+        .metric-value {
+            font-size: 22px;
+            font-weight: 700;
+            color: var(--text-primary);
+            margin-top: 4px;
+        }
+
+        .metric-sub {
+            font-size: 12px;
+            color: var(--accent-blue);
+            margin-top: 2px;
+        }
+
+        /* Table */
+        .table-responsive {
+            overflow-x: auto;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 14px;
+            text-align: left;
+        }
+
+        thead {
+            background-color: var(--bg-tertiary);
+        }
+
+        th {
+            padding: 12px 14px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            font-size: 11px;
+            letter-spacing: 0.5px;
+            border-bottom: 2px solid var(--border-color);
+        }
+
+        td {
+            padding: 14px;
+            border-bottom: 1px solid var(--border-color);
+            vertical-align: middle;
+        }
+
+        tr:hover td {
+            background-color: rgba(255, 255, 255, 0.02);
+        }
+
+        .algo-name {
+            font-weight: 600;
+            color: var(--text-primary);
+            display: flex;
+            flex-direction: column;
+        }
+
+        .algo-code {
+            font-family: monospace;
+            font-size: 11px;
+            color: var(--text-muted);
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .badge-green {
+            background-color: rgba(52, 211, 153, 0.15);
+            color: var(--accent-green);
+            border: 1px solid rgba(52, 211, 153, 0.3);
+        }
+
+        .badge-red {
+            background-color: rgba(248, 113, 113, 0.15);
+            color: var(--accent-red);
+            border: 1px solid rgba(248, 113, 113, 0.3);
+        }
+
+        .badge-amber {
+            background-color: rgba(251, 191, 36, 0.15);
+            color: var(--accent-amber);
+            border: 1px solid rgba(251, 191, 36, 0.3);
+        }
+
+        .badge-blue {
+            background-color: rgba(56, 189, 248, 0.15);
+            color: var(--accent-blue);
+            border: 1px solid rgba(56, 189, 248, 0.3);
+        }
+
+        .progress-bar-container {
+            width: 110px;
+            height: 8px;
+            background-color: var(--bg-tertiary);
+            border-radius: 4px;
+            overflow: hidden;
+            margin-top: 4px;
+        }
+
+        .progress-bar-fill {
+            height: 100%;
+            background-color: var(--accent-green);
+        }
+
+        /* Tradeoff Details */
+        .tradeoff-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+            gap: 16px;
+            margin-top: 24px;
+        }
+
+        .tradeoff-card {
+            background-color: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: var(--card-radius);
+            padding: 16px;
+        }
+
+        .tradeoff-header {
+            font-weight: 600;
+            font-size: 15px;
+            margin-bottom: 12px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .tradeoff-item {
+            margin-bottom: 8px;
+            font-size: 13px;
+        }
+
+        .tradeoff-key {
+            font-weight: 600;
+            color: var(--text-secondary);
+        }
+
+        footer {
+            margin-top: 40px;
+            padding-top: 16px;
+            border-top: 1px solid var(--border-color);
+            text-align: center;
+            font-size: 12px;
+            color: var(--text-muted);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div class="logo-group">
+                <span class="shield-icon">🛡️</span>
+                <div>
+                    <h1>RateFortress Comparison Engine</h1>
+                    <div class="subtitle">Empirical Cross-Algorithm Benchmarking, Tradeoff Analysis & Fairness Simulation</div>
+                </div>
+            </div>
+            <div class="header-links">
+                <a href="/compare?format=json">View JSON</a>
+                <a href="/metrics">Prometheus Metrics</a>
+                <a href="/health">Health</a>
+            </div>
+        </header>
+
+        <!-- Configuration Control Panel -->
+        <div class="card">
+            <div class="card-title">⚙️ Simulation Parameters</div>
+            <form method="get" action="/compare">
+                <input type="hidden" name="format" value="html">
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label for="users">Synthetic Users</label>
+                        <input type="number" id="users" name="users" min="1" max="1000" value="{{ scenario.users }}" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="requests_per_user">Requests / User</label>
+                        <input type="number" id="requests_per_user" name="requests_per_user" min="1" max="500" value="{{ scenario.requests_per_user }}" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="window">Window (seconds)</label>
+                        <input type="number" id="window" name="window" min="1" max="300" value="{{ scenario.window_seconds }}" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="limit">Quota Limit / User</label>
+                        <input type="number" id="limit" name="limit" min="1" max="500" value="{{ scenario.limit }}" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="pattern">Traffic Pattern</label>
+                        <select id="pattern" name="pattern">
+                            <option value="uniform" {% if scenario.pattern == 'uniform' %}selected{% endif %}>Uniform (100% Steady)</option>
+                            <option value="skewed" {% if scenario.pattern == 'skewed' %}selected{% endif %}>Skewed (80% Steady / 20% Bursty)</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <button type="submit" class="btn-submit">Run Simulation ⚡</button>
+                    </div>
+                </div>
+            </form>
+        </div>
+
+        <!-- Metric Badges Overview -->
+        <div class="metrics-summary">
+            <div class="metric-box">
+                <div class="metric-label">Total Requests</div>
+                <div class="metric-value">{{ scenario.total_requests }}</div>
+                <div class="metric-sub">{{ scenario.users }} users × {{ scenario.requests_per_user }} reqs</div>
+            </div>
+            <div class="metric-box">
+                <div class="metric-label">Quota Envelope</div>
+                <div class="metric-value">{{ scenario.limit }} / {{ scenario.window_seconds }}s</div>
+                <div class="metric-sub">{{ (scenario.limit / scenario.window_seconds) | round(2) }} req/sec budget</div>
+            </div>
+            <div class="metric-box">
+                <div class="metric-label">Traffic Distribution</div>
+                <div class="metric-value" style="font-size: 18px; text-transform: capitalize;">{{ scenario.pattern }}</div>
+                <div class="metric-sub">{% if scenario.pattern == 'skewed' %}80% steady / 20% bursty{% else %}Uniform distribution{% endif %}</div>
+            </div>
+            <div class="metric-box">
+                <div class="metric-label">Algorithms Evaluated</div>
+                <div class="metric-value">5</div>
+                <div class="metric-sub">Pure Python isolated engine</div>
+            </div>
+        </div>
+
+        <!-- Comparative Results Table -->
+        <div class="card">
+            <div class="card-title">📊 Comparative Simulation Matrix</div>
+            <div class="table-responsive">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Algorithm</th>
+                            <th>Allowed Requests</th>
+                            <th>Blocked (429)</th>
+                            <th>Decision Latency</th>
+                            <th>Memory (Per User)</th>
+                            <th>Burst Vulnerability</th>
+                            <th>Fairness Verdict</th>
+                            <th>Primary Production Strength</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for r in results %}
+                        <tr>
+                            <td>
+                                <div class="algo-name">
+                                    {{ r.display_name }}
+                                    <span class="algo-code">{{ r.algorithm }}</span>
+                                </div>
+                            </td>
+                            <td>
+                                <div>
+                                    <span class="badge badge-green">{{ r.allowed }} ({{ r.allowed_pct }}%)</span>
+                                </div>
+                                <div class="progress-bar-container">
+                                    <div class="progress-bar-fill" style="width: {{ r.allowed_pct }}%;"></div>
+                                </div>
+                            </td>
+                            <td>
+                                <span class="badge badge-red">{{ r.blocked }} ({{ r.blocked_pct }}%)</span>
+                            </td>
+                            <td>
+                                <span style="font-family: monospace; font-weight: 600;">
+                                    {% if r.avg_latency_ms < 0.01 %}
+                                        {{ (r.avg_latency_ms * 1000) | round(1) }} µs
+                                    {% else %}
+                                        {{ r.avg_latency_ms | round(3) }} ms
+                                    {% endif %}
+                                </span>
+                            </td>
+                            <td>
+                                <span class="badge {% if 'O(1)' in r.tradeoffs.memory %}badge-blue{% else %}badge-amber{% endif %}">
+                                    {% if 'O(1)' in r.tradeoffs.memory %}O(1) RAM{% else %}O(N) RAM{% endif %}
+                                </span>
+                            </td>
+                            <td>
+                                {% if 'boundary burst' in r.tradeoffs.accuracy.lower() %}
+                                    <span class="badge badge-red">High (2x Peak)</span>
+                                {% elif 'approx' in r.tradeoffs.accuracy.lower() %}
+                                    <span class="badge badge-blue">Bounded (<0.05%)</span>
+                                {% else %}
+                                    <span class="badge badge-green">None (Strict)</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if r.fairness.favors == 'bursty' %}
+                                    <span class="badge badge-amber">Favors Bursty</span>
+                                {% elif r.fairness.favors == 'steady' %}
+                                    <span class="badge badge-blue">Favors Steady</span>
+                                {% else %}
+                                    <span class="badge badge-green">Neutral / Balanced</span>
+                                {% endif %}
+                                {% if scenario.pattern == 'skewed' %}
+                                    <div style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">
+                                        Bursty: {{ r.fairness.bursty_users_allowed_pct }}% | Steady: {{ r.fairness.steady_users_allowed_pct }}%
+                                    </div>
+                                {% endif %}
+                            </td>
+                            <td style="font-size: 12px; color: var(--text-secondary); max-width: 240px;">
+                                {{ r.tradeoffs.strength }}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Qualitative Tradeoff Detail Cards -->
+        <h2 style="font-size: 18px; margin-bottom: 12px; font-weight: 600;">Architectural Tradeoffs & System Design Rationale</h2>
+        <div class="tradeoff-grid">
+            {% for r in results %}
+            <div class="tradeoff-card">
+                <div class="tradeoff-header">
+                    <span>{{ r.display_name }}</span>
+                    <span class="badge badge-blue">{{ r.algorithm }}</span>
+                </div>
+                <div class="tradeoff-item">
+                    <span class="tradeoff-key">Accuracy:</span>
+                    <span>{{ r.tradeoffs.accuracy }}</span>
+                </div>
+                <div class="tradeoff-item">
+                    <span class="tradeoff-key">Memory Footprint:</span>
+                    <span>{{ r.tradeoffs.memory }}</span>
+                </div>
+                <div class="tradeoff-item">
+                    <span class="tradeoff-key">Fairness Profile:</span>
+                    <span>{{ r.tradeoffs.fairness }}</span>
+                </div>
+                <div class="tradeoff-item">
+                    <span class="tradeoff-key">Target Use Case:</span>
+                    <span style="color: var(--accent-green);">{{ r.tradeoffs.ideal_scenario }}</span>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+
+        <footer>
+            RateFortress Distributed Rate Limiting Engine • Week 12 Algorithm Comparison Engine • Documented in <a href="file:///docs/tradeoffs.md" style="color: var(--accent-blue);">docs/tradeoffs.md</a>
+        </footer>
+    </div>
+</body>
+</html>
+
