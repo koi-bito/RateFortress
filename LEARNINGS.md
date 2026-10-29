@@ -575,4 +575,46 @@ A structured record of architectural decisions, DSA insights, failure modes, and
     > Built and open-sourced **RateFortress**, a distributed rate limiting engine in Python and Redis implementing 5 algorithms (Token Bucket, Leaky Bucket, Sliding Window Log/Counter, Fixed Window); authored atomic Lua scripts to eliminate check-and-set concurrency race conditions under 50-thread stress tests (0% over-admission), benchmarked to 43,000+ req/s, and integrated fail-open circuit breakers.
   - *Platform / DevOps Role:*
     > Architected an observable API rate-limiting gateway in FastAPI with Prometheus metrics, live Grafana dashboards, Loki structured JSON logging, and OpenTelemetry tracing; orchestrated multi-container stacks via Docker Compose, configured multi-version GitHub Actions CI/CD with live Redis service containers, and authored automated zero-downtime Blue-Green deployment and rollback runbooks.
-- **Milestone Reached:** 🎉 **Core 15-Week Foundation & Production Stack Complete!** All 140 automated tests passing with zero failures. Ready for Weeks 16–20: Research Layer & Optional Extensions.
+- **Milestone Reached:** 🎉 **Core 15-Week Foundation & Production Stack Complete!** All 144 automated tests passing across Python 3.11, 3.12, and 3.13 with zero failures. Ready for Weeks 16–20: Research Layer & Optional Extensions.
+
+---
+
+## 🛠️ Post-Mortem: Real-World CI/CD Pipeline Debugging & Hard-Won Lessons
+
+### Incident 1 — The Silent Plugin Drop: Missing `pytest-asyncio` in CI Dependencies
+- **The Symptom:**
+  - All 138 pure-Python synchronous tests passed locally and in CI.
+  - All 6 asynchronous Redis algorithm integration tests (`tests/test_async_redis_algorithms.py`) failed instantly on GitHub Actions runners with:
+    > `async def functions are not natively supported. You need to install a suitable plugin for your async framework (pytest-asyncio)`.
+- **The Root Cause:**
+  - The developer's local virtual environment had `pytest-asyncio` installed, but the dependency was omitted from `requirements.txt`.
+  - In local development, Pytest automatically discovered the locally installed plugin via entry points. On clean, freshly provisioned GitHub Actions runner VMs (`pip install -r requirements.txt`), `pytest-asyncio` was absent, leaving Pytest unable to execute coroutines.
+- **The Solution:**
+  - Explicitly pinned `pytest-asyncio==1.4.0` (and transitive runtime dependencies such as `Jinja2` and `MarkupSafe`) in `requirements.txt`.
+  - Configured `asyncio_mode = auto` and `asyncio_default_fixture_loop_scope = function` in `pytest.ini` for deterministic execution across Python 3.11, 3.12, and 3.13.
+- **The Hard-Won Lesson:**
+  - **Never rely on ambient local environment state:** What works in a developer virtualenv can silently fail in CI if not declared in version-controlled dependency manifests.
+  - **Automate dependency auditing:** Pytest plugins and ASGI template dependencies must be validated via clean headless container builds prior to tagging releases.
+
+### Incident 2 — The Import-Time Race Condition & The "Fail-Open" Circuit Breaker Trap
+- **The Symptom:**
+  - In CI on GitHub Actions, 5 integration tests (`tests/test_middleware.py`, `tests/test_middleware_integration.py`, and `tests/test_deployment_week13.py`) failed with:
+    > `assert 200 == 429` (The 6th request was permitted instead of throttled).
+- **The Root Cause (Three Compounding Factors):**
+  1. **Python Module Import Timing vs. Pytest Dynamic Fixtures:**
+     - `conftest.py` defined an autouse fixture setting `monkeypatch.setenv("USE_FAKE_REDIS", "true")`.
+     - However, `tests/test_middleware.py` instantiated `client = TestClient(app)` at the **top level of the module**.
+     - In Python, Pytest imports test files during test collection *before* executing any test fixtures. Because the CI runner had `USE_FAKE_REDIS="false"` set in `.github/workflows/test.yml`, `create_app()` executed at import time with live Redis mode enabled.
+  2. **IPv4 vs. IPv6 Resolution Discrepancy on Linux CI Runners:**
+     - The live Redis client was configured with `REDIS_HOST=localhost`. On Ubuntu GitHub Actions runners, `localhost` resolves to IPv6 `::1`, whereas the Docker service container was bound only to IPv4 `127.0.0.1:6379`. The connection was refused immediately (`[Errno 111] Connection refused`).
+  3. **The Masking Behavior of the Fail-Open Pattern:**
+     - RateFortress's `CircuitBreaker` is intentionally engineered to **fail-open** (`fail_open=True`) during storage outages to protect gateway availability.
+     - When the Redis connection threw an exception, `CircuitBreaker` caught the failure and returned `allowed=True` (HTTP 200).
+     - Because every request was allowed through with 200 OK, the test assertions expecting HTTP 429 failed!
+- **The Solution:**
+  - Initialized `os.environ["USE_FAKE_REDIS"] = "true"` at the very top of `tests/conftest.py` so it takes effect at initial script evaluation time before any test modules or gateway singletons are imported.
+  - Updated `.github/workflows/test.yml` to specify `USE_FAKE_REDIS: "true"` and `REDIS_HOST: 127.0.0.1` for unit/integration test stages.
+- **The Hard-Won Lessons:**
+  - **Beware of module-level application instantiation in test suites:** Top-level singletons (`client = TestClient(app)`) evaluate once at import time and freeze their dependencies, completely bypassing per-test fixtures.
+  - **Always prefer `127.0.0.1` over `localhost` in containerized CI environments:** Eliminates dual-stack IPv6 DNS resolution mismatches between host runners and container bridge interfaces.
+  - **Resilience mechanisms can mask infrastructure bugs in tests:** A properly functioning fail-open circuit breaker makes a broken database connection look like a successful HTTP 200 request; always verify telemetry and underlying storage logs when rate limits appear to "disappear".
