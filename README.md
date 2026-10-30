@@ -60,11 +60,12 @@ ratefortress/
 │   └── storage/        # Redis connection pools, Lua scripts (atomic EVALSHA)
 ├── proto/              # Protocol Buffers definitions (ratefortress.proto)
 ├── templates/          # Jinja2 HTML responsive comparison dashboard
-├── tests/              # 165 automated tests (unit, concurrency, property, integration)
+├── tests/              # 172 automated tests (unit, concurrency, property, integration)
 ├── benchmarks/         # Micro-benchmarking harness & boundary burst reproducers
 ├── loadtests/          # Locust & k6 distributed load, spike & soak testing scripts
 ├── monitoring/         # Grafana dashboard provisioning, alert rules, Promtail & Prometheus configs
 ├── docs/               # System design specs, Runbooks, ADRs, and Architecture diagrams
+│   ├── redteam_report.md           # Red team adversary simulation, header spoofing & abuse report
 │   ├── comparative_benchmark_article.md # Comprehensive systems publication & benchmark report
 │   ├── scaling.md                  # Redis Cluster hash slots & multi-region scaling plan
 │   ├── package_guide.md            # Standalone pip package integration guide

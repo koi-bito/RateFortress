@@ -39,6 +39,7 @@ from src.algorithms.token_bucket import TokenBucket
 from src.middleware.circuit_breaker import CircuitBreaker
 from src.middleware.config import API_KEYS, DEFAULT_ROUTE_RULES, EndpointRule
 from src.middleware.endpoint_trie import EndpointTrie
+from src.middleware.trusted_proxy import parse_trusted_proxies, resolve_client_ip
 from src.monitoring.logging_config import app_logger
 from src.monitoring.metrics import (
     ACTIVE_REQUESTS,
@@ -72,10 +73,12 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         circuit_breaker: CircuitBreaker | None = None,
         redis_client: Any | None = None,
         async_redis_client: Any | None = None,
+        trusted_proxies: str | None = None,
     ):
         super().__init__(app)
         self.redis_client = redis_client
         self.async_redis_client = async_redis_client
+        self.trusted_proxies = parse_trusted_proxies(trusted_proxies)
 
         # Detect if redis_client passed is actually an async client
         if redis_client is not None and (
@@ -126,14 +129,14 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             tier_info = self.api_keys[api_key]
             return api_key, tier_info["tier"], tier_info["limit_multiplier"]
 
-        # Fallback to IP address
+        # Fallback to IP address with anti-spoofing trusted proxy resolution
+        peer_ip = request.client.host if request.client else "unknown_client"
         forwarded_for = request.headers.get("x-forwarded-for")
-        if forwarded_for:
-            ip = forwarded_for.split(",")[0].strip()
-        elif request.client:
-            ip = request.client.host
-        else:
-            ip = "unknown_client"
+        ip = resolve_client_ip(
+            peer_ip=peer_ip,
+            forwarded_for=forwarded_for,
+            trusted_networks=self.trusted_proxies,
+        )
 
         return f"ip_{ip}", "anonymous", 1
 

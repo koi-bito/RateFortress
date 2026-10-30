@@ -688,3 +688,49 @@ A structured record of architectural decisions, DSA insights, failure modes, and
 - **Hardest Technical Challenge Across Weeks 1–20:** Eliminating TOCTOU check-then-set race conditions in Redis under concurrent multi-threaded spikes. Solved by replacing naive multi-call pipelines with atomic Lua scripts evaluated in Redis's single-threaded event loop, yielding an empirical 0% over-admission rate.
 - **What We Would Do Differently:** Adopt `redis.asyncio` from Day 34 rather than starting with synchronous `redis.Redis`, avoiding the event-loop starvation debugging cycle encountered during 500-user Locust load testing.
 - **Milestone Reached:** 🎉 **Weeks 16–20 Research Layer & Advanced Extensions Complete!** Full project suite expanded to **165 automated tests passing with zero failures**, 6 algorithms, REST + gRPC interfaces, and comprehensive production documentation. Ready for Week 21: Adversarial Testing & Abuse Simulation.
+
+
+---
+
+## 🛡️ Week 21 — Adversarial Testing & Abuse Simulation (Days 101–105)
+
+### Day 101 — Real-World Rate Limit Bypass Techniques
+- **Vulnerabilities Across Dimensions:**
+  - *IP-Based Rate Limiting:* Highly vulnerable to **`X-Forwarded-For` header spoofing** (when servers naively trust untrusted clients) and **residential proxy pool rotation** (where millions of real IPs make 1-2 requests each, completely evading single-IP thresholds).
+  - *API Key-Based Rate Limiting:* Highly vulnerable to **account cycling / Sybil attacks** (scripting disposable free accounts). Because application limits are keyed on `api_key`, distributed free-trial farms stay under individual quotas while collectively exhausting infrastructure.
+- **Why Naive `X-Forwarded-For` Trust Breaks:**
+  - In standard HTTP, any client can send arbitrary request headers: `X-Forwarded-For: 203.0.113.195`.
+  - If a reverse proxy or application gateway reads the leftmost IP without verifying that the request arrived through a known, trusted proxy, an attacker can generate a random IP on every request, gaining unlimited bypass capacity.
+
+### Day 102 — Attacker Simulation Script (`loadtests/adversary_simulation.py`)
+- **Empirical Attack Measurements on Default Gateway:**
+  - *Vanilla Single-IP Burst (30 requests against limit of 10):* 10 allowed, 20 blocked. Bypass Rate: **0.0%**.
+  - *X-Forwarded-For Header Spoofing (30 requests with random IPs):* **30 allowed, 0 blocked**. Bypass Rate: **66.7%** (100% of requests admitted, leaking 200% over the nominal limit of 10).
+- **Artifact:** Automated attack harness in `loadtests/adversary_simulation.py`.
+
+### Day 103 — Hardening Defenses: Trusted Proxy Validation (`src/middleware/trusted_proxy.py`)
+- **Remediation Implemented:**
+  1. *Peer Socket Verification:* The raw TCP peer IP (`request.client.host`) is checked against a configurable CIDR list of trusted proxies (`TRUSTED_PROXIES`). If the peer is NOT in a trusted network, `X-Forwarded-For` is completely ignored.
+  2. *Right-to-Left Traversal:* When requests pass through legitimate trusted proxies (e.g. AWS ALB, Cloudflare), the proxy chain is evaluated from right to left, isolating the first untrusted upstream IP and preventing client-prepended spoofed values from being selected.
+- **Post-Fix Empirical Verification:**
+  - Re-running `adversary_simulation.py` against untrusted peers:
+    - *Spoofed X-Forwarded-For:* **10 allowed, 20 blocked** (Bypass Rate: **0.0%**). All spoofed attempts are securely anchored to the raw socket peer IP.
+
+### Day 104 — Defense in Depth: Behavioral Anomaly Detection (`src/middleware/behavioral_shield.py`)
+- **Why Timing Jitter Matters:**
+  - Programmatic scripts (`while True: req(); time.sleep(0.1)`) exhibit near-zero timing variance: Coefficient of Variation $CV = \frac{\sigma}{\mu} < 0.05$.
+  - Legitimate human users reading content, scrolling, and clicking exhibit high entropy and variable intervals ($CV > 0.30$).
+- **Why "Apply a Stricter Limit and Flag for Review" Beats "Block Instantly":**
+  - Behavioral heuristics are probabilistic, not deterministic. Hard-blocking on behavioral scores risks creating catastrophic false-positive lockouts for legitimate power users, rapid typists, or accessibility tools.
+  - Temporarily downgrading a client to a restricted tier (e.g. 0.2x multiplier) curtails bot abuse while allowing legitimate users to continue operating with minor pacing, avoiding permanent friction.
+- **Verification:** Tested in `tests/test_behavioral_shield.py` with 100% pass rate.
+
+### Day 105 — Red Team Report & Evolution of Understanding
+- **Artifact:** Published `docs/redteam_report.md` detailing attack vectors, before/after empirical numbers, and residual edge risks.
+- **Evolution of "Fake Free Trials" Understanding Since Day 1:**
+  - On Day 1, rate limiting felt like a straightforward arithmetic problem: count requests per second, decrement tokens, return 429 when empty.
+  - By Day 105, it is clear that rate limiting is a multi-layered security and identity challenge:
+    1. A single rate-limiting algorithm cannot defend an API against distributed abuse alone.
+    2. Attackers defeat IP limits with proxy pools, defeat key limits with account cycling, and exploit header trust to spoof identity.
+    3. True production resilience requires defense-in-depth: edge WAFs (TLS fingerprinting, ASN blocks), application-level distributed engines (RateFortress with atomic Lua and trusted proxy validation), behavioral anomaly scoring, and verified billing/identity gates at account creation.
+- **Milestone Reached:** 🎉 **Week 21 Complete! Adversary simulation, anti-spoofing trusted proxy validation, and behavioral shield operational.** All **172 automated tests passing**. Ready for Week 22: System Design Interview Mastery.
