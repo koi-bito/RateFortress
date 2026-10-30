@@ -64,3 +64,4 @@
 - **Defense:**
   > "1. 100% of RateFortress keys have explicit TTLs calculated from window length or bucket fill time, verified by automated tests (`test_redis_ttl_strategy.py`).
   > 2. We configure Redis with `maxmemory-policy volatile-lru`, ensuring that only expiring rate limit keys are evicted under memory pressure, preserving persistent configuration."
+

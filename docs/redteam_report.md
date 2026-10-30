@@ -61,3 +61,4 @@
 1. **Never trust HTTP headers from untrusted networks:** Headers like `X-Forwarded-For` are client-controlled strings unless verified against private VPC or edge proxy subnets.
 2. **Prefer graceful tier degradation over immediate hard drops:** When behavioral heuristics detect automation, temporarily constraining quota protects legitimate power users from false-positive lockouts while neutralizing bot swarms.
 3. **Defense in Depth is an operational requirement:** A robust systems architecture combines edge WAFs, application-level distributed rate limiters (RateFortress), and verified identity lifecycles.
+

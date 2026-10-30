@@ -125,3 +125,4 @@ def create_grpc_server(
     )
     bound_port = server.add_insecure_port(f"{host}:{port}")
     return server, bound_port
+

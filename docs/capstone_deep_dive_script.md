@@ -56,3 +56,4 @@
 - **Observability:** Walk through Prometheus metrics (`ratefortress_requests_total`, `ratefortress_limiter_overhead_seconds`), Loki structured JSON logs with client key masking, OpenTelemetry tracing spans, and live Grafana dashboards.
 - **CI/CD Parity:** Discuss our post-mortem incidents: why `pytest-asyncio` must be explicitly declared, why `conftest.py` must set environment flags before top-level imports evaluate, and why `127.0.0.1` must be preferred over `localhost` on dual-stack IPv6 runners.
 - **Summary:** RateFortress bridges theoretical algorithms, distributed concurrency, production resilience, and cloud operations.
+

@@ -192,3 +192,4 @@ flowchart TD
 - [x] **Always set TTLs on every rate limit key:** Use `volatile-lru` eviction in Redis to prevent orphaned keys from causing out-of-memory crashes.
 - [x] **Always implement Fail-Open Circuit Breakers:** If Redis goes down, customer-facing APIs must remain available rather than returning HTTP 500 across your entire platform.
 - [x] **Return proactive rate-limiting headers on EVERY response:** `X-RateLimit-Limit`, `X-RateLimit-Remaining`, and `Retry-After` allow well-behaved client SDKs to back off *before* hitting HTTP 429 errors.
+

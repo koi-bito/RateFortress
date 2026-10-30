@@ -78,3 +78,4 @@ Our empirical benchmarks conducted on identical hardware across pure Python and 
   - *Mitigation:* We pair Token Bucket with short window refills (e.g., $10\text{ tokens / 1s}$ with burst capacity $15$, rather than $600\text{ tokens / 60s}$) or recommend Leaky Bucket specifically for asynchronous background queuing systems.
 - **Clock Skew:** GCRA and Token Bucket rely on monotonic or Unix epoch time.
   - *Mitigation:* All Redis operations use Redis server time (`redis.call('TIME')`) or centralized synchronized gateway clocks using chrony/NTP to ensure skew remains $< 1\text{ ms}$.
+

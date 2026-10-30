@@ -57,3 +57,4 @@ def test_capstone_artifacts():
     assert script.exists()
     content = script.read_text(encoding="utf-8")
     assert "Capstone Deep Dive" in content
+

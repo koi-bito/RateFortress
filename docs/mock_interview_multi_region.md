@@ -110,3 +110,4 @@ If cross-region fiber cuts disconnect US-East from EU-West:
 - **Latency is King:** In API infrastructure, an extra 80ms of overhead on every request is a dealbreaker. Any design claiming "strict global ACID consistency across continents for high-volume rate limiting" reveals a fundamental misunderstanding of network physics.
 - **The 95/5 Rule:** 95% of API clients originate from a single primary geographic region (where their backend servers run). Only roaming mobile users or multi-region distributed clients span continents.
 - **Defense in Depth:** Combine global batched token leasing with a fast edge CDN rate limiter (Cloudflare/Fastly WAF) at Layer 7 for raw DDoS, reserving RateFortress for fine-grained multi-tier business quota management.
+

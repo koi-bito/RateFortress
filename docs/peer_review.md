@@ -49,3 +49,4 @@
   - *Verification:* `JSONLogFormatter` automatically masks secret API keys (`key_...123`), preventing credential leakage into Loki or log aggregators.
 - [x] **Tooling Endpoint Protection:**
   - *Verification:* Dedicated rate limits applied to `/compare` (30 req/min) and `/metrics` (60 req/min) to prevent CPU burn and scraping DoS.
+

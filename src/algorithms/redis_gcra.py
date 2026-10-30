@@ -105,3 +105,4 @@ class RedisGCRA:
     def limit(self) -> int:
         """Returns the nominal capacity/limit."""
         return self.limit_val
+

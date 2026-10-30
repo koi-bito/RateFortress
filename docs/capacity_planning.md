@@ -169,3 +169,4 @@ $$\text{Total Gateway Cores} = \frac{1,000,000\text{ req/sec}}{8,000\text{ req/s
    P99 Latency Budget: < 1.4ms
    Total Storage Footprint: < 5 GB
 ```
+

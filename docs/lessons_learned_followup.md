@@ -39,3 +39,4 @@ Emitting `X-RateLimit-Limit`, `X-RateLimit-Remaining`, and `Retry-After` on ever
 
 1. **Multi-Region Active-Active Replication:** Exploring Conflict-Free Replicated Data Types (CRDTs) or local token partitioning across geographically distributed Redis clusters.
 2. **Dynamic Heuristics:** Moving beyond static IP and API key limits to behavioral anomaly scoring (e.g., detecting programmatic automation vs. natural human variance).
+

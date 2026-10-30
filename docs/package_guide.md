@@ -95,3 +95,4 @@ from src.middleware.circuit_breaker import CircuitBreaker
 # Automatically fails open on storage downtime
 breaker = CircuitBreaker(failure_threshold=5, recovery_timeout_sec=15.0, fail_open=True)
 ```
+

@@ -164,3 +164,4 @@ If Redis encounters network partition, latency spikes ($> 20\text{ ms}$), or cra
 >
 > RateFortress implements **Trusted Proxy CIDR Verification**:
 > We inspect the reverse-proxy chain right-to-left. If the immediate connection is from a known trusted proxy subnet (e.g. AWS ALB CIDR `10.0.0.0/16`), we traverse backward until we find the first non-trusted IP. If the peer is not in our trusted list, we discard the header completely and anchor limits to the raw TCP socket IP.
+

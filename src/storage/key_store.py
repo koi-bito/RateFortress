@@ -147,3 +147,4 @@ def reset_key_store():
     """Resets global key store singleton (for test isolation)."""
     global _global_key_store
     _global_key_store = None
+

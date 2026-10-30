@@ -113,3 +113,4 @@ def test_grpc_get_quota(grpc_server_and_stub):
     resp = stub.GetQuota(req)
     assert resp.limit == 10
     assert resp.remaining == 10
+

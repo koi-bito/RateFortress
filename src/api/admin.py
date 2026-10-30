@@ -261,3 +261,4 @@ def get_admin_summary() -> dict[str, Any]:
     summary["timestamp"] = time.time()
     summary["engine_status"] = "healthy"
     return summary
+
