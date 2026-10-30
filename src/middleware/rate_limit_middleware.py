@@ -39,6 +39,7 @@ from src.algorithms.token_bucket import TokenBucket
 from src.middleware.circuit_breaker import CircuitBreaker
 from src.middleware.config import API_KEYS, DEFAULT_ROUTE_RULES, EndpointRule
 from src.middleware.endpoint_trie import EndpointTrie
+from src.middleware.key_manager import APIKeyManager
 from src.middleware.trusted_proxy import parse_trusted_proxies, resolve_client_ip
 from src.monitoring.logging_config import app_logger
 from src.monitoring.metrics import (
@@ -74,11 +75,13 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         redis_client: Any | None = None,
         async_redis_client: Any | None = None,
         trusted_proxies: str | None = None,
+        key_manager: APIKeyManager | None = None,
     ):
         super().__init__(app)
         self.redis_client = redis_client
         self.async_redis_client = async_redis_client
         self.trusted_proxies = parse_trusted_proxies(trusted_proxies)
+        self.key_manager = key_manager
 
         # Detect if redis_client passed is actually an async client
         if redis_client is not None and (
@@ -125,9 +128,14 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         Checks X-API-Key header first; falls back to client IP.
         """
         api_key = request.headers.get("x-api-key")
-        if api_key and api_key in self.api_keys:
-            tier_info = self.api_keys[api_key]
-            return api_key, tier_info["tier"], tier_info["limit_multiplier"]
+        if api_key:
+            if self.key_manager is not None:
+                meta = self.key_manager.verify_key(api_key)
+                if meta:
+                    return api_key, meta.tier, meta.limit_multiplier
+            elif self.api_keys and api_key in self.api_keys:
+                tier_info = self.api_keys[api_key]
+                return api_key, tier_info["tier"], tier_info["limit_multiplier"]
 
         # Fallback to IP address with anti-spoofing trusted proxy resolution
         peer_ip = request.client.host if request.client else "unknown_client"

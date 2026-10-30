@@ -1,0 +1,547 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RateFortress — Multi-Tenant Admin Dashboard</title>
+  <style>
+    :root {
+      --bg: #090d16;
+      --card-bg: #111827;
+      --card-border: #1f2937;
+      --accent: #10b981;
+      --accent-hover: #059669;
+      --primary: #6366f1;
+      --primary-hover: #4f46e5;
+      --danger: #ef4444;
+      --warning: #f59e0b;
+      --text: #f9fafb;
+      --text-muted: #9ca3af;
+      --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: var(--font); }
+    body { background-color: var(--bg); color: var(--text); min-height: 100vh; display: flex; flex-direction: column; }
+
+    header {
+      background: rgba(17, 24, 39, 0.85);
+      backdrop-filter: blur(8px);
+      border-bottom: 1px solid var(--card-border);
+      padding: 1rem 2rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      position: sticky;
+      top: 0;
+      z-index: 50;
+    }
+
+    .brand { display: flex; align-items: center; gap: 0.75rem; font-weight: 700; font-size: 1.25rem; color: var(--text); }
+    .brand span { color: var(--accent); }
+    .badge-engine { background: #064e3b; color: #34d399; font-size: 0.75rem; padding: 0.25rem 0.5rem; border-radius: 9999px; }
+
+    .header-actions { display: flex; align-items: center; gap: 1rem; }
+    .admin-auth-input {
+      background: #1f2937;
+      border: 1px solid #374151;
+      color: var(--text);
+      padding: 0.4rem 0.75rem;
+      border-radius: 6px;
+      font-size: 0.85rem;
+      width: 220px;
+    }
+
+    main { max-width: 1280px; margin: 2rem auto; padding: 0 1.5rem; width: 100%; flex: 1; }
+
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 1.25rem;
+      margin-bottom: 2rem;
+    }
+
+    .kpi-card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 10px;
+      padding: 1.25rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+
+    .kpi-title { font-size: 0.85rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; }
+    .kpi-value { font-size: 2rem; font-weight: 800; color: var(--text); }
+    .kpi-subtitle { font-size: 0.75rem; color: var(--accent); }
+
+    .content-grid {
+      display: grid;
+      grid-template-columns: 2fr 1fr;
+      gap: 1.5rem;
+    }
+
+    @media (max-width: 960px) {
+      .content-grid { grid-template-columns: 1fr; }
+    }
+
+    .panel {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 10px;
+      overflow: hidden;
+    }
+
+    .panel-header {
+      padding: 1rem 1.25rem;
+      border-bottom: 1px solid var(--card-border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: #131d2e;
+    }
+
+    .panel-title { font-size: 1.05rem; font-weight: 600; }
+
+    .btn {
+      padding: 0.45rem 0.9rem;
+      border-radius: 6px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      border: none;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+    }
+
+    .btn-primary { background: var(--primary); color: white; }
+    .btn-primary:hover { background: var(--primary-hover); }
+    .btn-accent { background: var(--accent); color: white; }
+    .btn-accent:hover { background: var(--accent-hover); }
+    .btn-outline { background: transparent; border: 1px solid var(--card-border); color: var(--text); }
+    .btn-outline:hover { background: #1f2937; }
+    .btn-danger { background: rgba(239, 68, 68, 0.15); color: #f87171; border: 1px solid #7f1d1d; }
+    .btn-danger:hover { background: var(--danger); color: white; }
+    .btn-sm { padding: 0.25rem 0.5rem; font-size: 0.75rem; }
+
+    .table-container { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; text-align: left; font-size: 0.85rem; }
+    th { background: #0e1626; padding: 0.75rem 1rem; color: var(--text-muted); font-weight: 600; }
+    td { padding: 0.75rem 1rem; border-top: 1px solid #1f2937; vertical-align: middle; }
+    tr:hover { background: #162032; }
+
+    .badge {
+      display: inline-block;
+      padding: 0.2rem 0.5rem;
+      border-radius: 9999px;
+      font-size: 0.7rem;
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+
+    .badge-tier-free { background: #1e293b; color: #94a3b8; }
+    .badge-tier-paid { background: #1e1b4b; color: #a5b4fc; }
+    .badge-tier-enterprise { background: #3b0764; color: #e9d5ff; border: 1px solid #9333ea; }
+
+    .badge-status-active { background: #064e3b; color: #34d399; }
+    .badge-status-rotating { background: #451a03; color: #fbbf24; }
+    .badge-status-revoked { background: #450a0a; color: #f87171; }
+
+    .key-code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      background: #090d16;
+      padding: 0.2rem 0.4rem;
+      border-radius: 4px;
+      font-size: 0.8rem;
+      color: #38bdf8;
+    }
+
+    /* Modal styling */
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.7);
+      backdrop-filter: blur(4px);
+      display: none;
+      justify-content: center;
+      align-items: center;
+      z-index: 100;
+    }
+    .modal-overlay.active { display: flex; }
+    .modal-card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 12px;
+      width: 100%;
+      max-width: 480px;
+      padding: 1.5rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1.25rem;
+    }
+    .modal-header { display: flex; justify-content: space-between; align-items: center; }
+    .form-group { display: flex; flex-direction: column; gap: 0.4rem; }
+    .form-group label { font-size: 0.8rem; color: var(--text-muted); }
+    .form-group input, .form-group select {
+      background: #1f2937;
+      border: 1px solid #374151;
+      color: var(--text);
+      padding: 0.5rem 0.75rem;
+      border-radius: 6px;
+      font-size: 0.9rem;
+    }
+
+    /* Interactive Simulator */
+    .sim-console {
+      background: #090d16;
+      border: 1px solid #1f2937;
+      border-radius: 8px;
+      padding: 1rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+      font-family: ui-monospace, SFMono-Regular, monospace;
+      font-size: 0.8rem;
+    }
+    .quota-bar-wrapper {
+      background: #1f2937;
+      border-radius: 9999px;
+      height: 10px;
+      overflow: hidden;
+      margin-top: 0.5rem;
+    }
+    .quota-bar {
+      height: 100%;
+      background: var(--accent);
+      width: 100%;
+      transition: width 0.3s ease, background-color 0.3s ease;
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <div class="brand">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+      </svg>
+      Rate<span>Fortress</span>
+      <span class="badge-engine">v1.0.0 Admin</span>
+    </div>
+    <div class="header-actions">
+      <input type="password" id="adminSecretKey" class="admin-auth-input" placeholder="Admin Secret Key" value="rf_admin_secret_master_key_2026">
+      <button class="btn btn-outline btn-sm" onclick="fetchSummary(); fetchKeys();">Refresh</button>
+    </div>
+  </header>
+
+  <main>
+    <!-- KPIs -->
+    <div class="kpi-grid">
+      <div class="kpi-card">
+        <span class="kpi-title">Active API Keys</span>
+        <span class="kpi-value" id="kpiActiveKeys">-</span>
+        <span class="kpi-subtitle">Permitted gateway tenants</span>
+      </div>
+      <div class="kpi-card">
+        <span class="kpi-title">Total Registered Keys</span>
+        <span class="kpi-value" id="kpiTotalKeys">-</span>
+        <span class="kpi-subtitle">Across all lifecycle states</span>
+      </div>
+      <div class="kpi-card">
+        <span class="kpi-title">Rotating Keys</span>
+        <span class="kpi-value" id="kpiRotatingKeys" style="color: var(--warning);">-</span>
+        <span class="kpi-subtitle">Dual-validity grace periods</span>
+      </div>
+      <div class="kpi-card">
+        <span class="kpi-title">Engine Health</span>
+        <span class="kpi-value" style="color: var(--accent);">Operational</span>
+        <span class="kpi-subtitle">Distributed Redis state</span>
+      </div>
+    </div>
+
+    <!-- Main Grid -->
+    <div class="content-grid">
+      <!-- Keys Table Panel -->
+      <div class="panel">
+        <div class="panel-header">
+          <span class="panel-title">Registered API Tenants</span>
+          <button class="btn btn-accent btn-sm" onclick="openIssueModal()">+ Issue API Key</button>
+        </div>
+        <div class="table-container">
+          <table>
+            <thead>
+              <tr>
+                <th>Key ID</th>
+                <th>Tier</th>
+                <th>Quota Mult</th>
+                <th>Status</th>
+                <th>Created</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="keysTableBody">
+              <tr>
+                <td colspan="6" style="text-align: center; color: var(--text-muted);">Loading tenant keys...</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Live Simulator Panel -->
+      <div class="panel">
+        <div class="panel-header">
+          <span class="panel-title">Live Rate Limit Tester</span>
+        </div>
+        <div style="padding: 1.25rem; display: flex; flex-direction: column; gap: 1rem;">
+          <div class="form-group">
+            <label>Select Tenant Key to Test</label>
+            <select id="simKeySelect" style="width: 100%;"></select>
+          </div>
+          <button class="btn btn-primary" onclick="runSimulatedRequest()">Send Test Request to /api/test</button>
+
+          <div class="sim-console" id="simOutput">
+            <div>Ready to test. Select a key and click send.</div>
+          </div>
+
+          <div>
+            <div style="display: flex; justify-content: space-between; font-size: 0.75rem; color: var(--text-muted);">
+              <span>Quota Remaining</span>
+              <span id="quotaPercentText">100%</span>
+            </div>
+            <div class="quota-bar-wrapper">
+              <div class="quota-bar" id="quotaBar"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- Issue Key Modal -->
+  <div class="modal-overlay" id="issueModal">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3 style="font-size: 1.1rem;">Issue New API Key</h3>
+        <button class="btn btn-outline btn-sm" onclick="closeIssueModal()">&times;</button>
+      </div>
+      <div class="form-group">
+        <label>Tenant Tier</label>
+        <select id="issueTier" onchange="autoUpdateMultiplier()">
+          <option value="free">Free (1x Quota)</option>
+          <option value="paid" selected>Paid (10x Quota)</option>
+          <option value="enterprise">Enterprise (50x Quota)</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Rate Limit Multiplier</label>
+        <input type="number" id="issueMultiplier" value="10" min="1" max="1000">
+      </div>
+      <div class="form-group">
+        <label>Description / Tenant Name</label>
+        <input type="text" id="issueDesc" placeholder="e.g. Acme Mobile App v2">
+      </div>
+      <div style="display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 1rem;">
+        <button class="btn btn-outline" onclick="closeIssueModal()">Cancel</button>
+        <button class="btn btn-accent" onclick="submitIssueKey()">Generate Key</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const API_BASE = '/api/v1/admin';
+
+    function getAdminKey() {
+      return document.getElementById('adminSecretKey').value || 'rf_admin_secret_master_key_2026';
+    }
+
+    async function adminFetch(endpoint, options = {}) {
+      const headers = options.headers || {};
+      headers['X-Admin-Key'] = getAdminKey();
+      headers['Content-Type'] = 'application/json';
+      options.headers = headers;
+      return fetch(endpoint, options);
+    }
+
+    async function fetchSummary() {
+      try {
+        const res = await adminFetch(`${API_BASE}/summary`);
+        if (!res.ok) return;
+        const data = await res.json();
+        document.getElementById('kpiActiveKeys').innerText = data.active_keys;
+        document.getElementById('kpiTotalKeys').innerText = data.total_keys;
+        document.getElementById('kpiRotatingKeys').innerText = data.rotating_keys;
+      } catch (err) {
+        console.error('Failed to load summary', err);
+      }
+    }
+
+    async function fetchKeys() {
+      try {
+        const res = await adminFetch(`${API_BASE}/keys`);
+        if (!res.ok) {
+          document.getElementById('keysTableBody').innerHTML = `<tr><td colspan="6" style="text-align: center; color: var(--danger);">Failed to authenticate admin credentials.</td></tr>`;
+          return;
+        }
+        const data = await res.json();
+        renderKeysTable(data.keys);
+        populateSimSelect(data.keys);
+      } catch (err) {
+        console.error('Failed to load keys', err);
+      }
+    }
+
+    function renderKeysTable(keys) {
+      const tbody = document.getElementById('keysTableBody');
+      if (!keys || keys.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="6" style="text-align: center; color: var(--text-muted);">No keys found.</td></tr>`;
+        return;
+      }
+
+      tbody.innerHTML = keys.map(k => {
+        const statusBadge = `<span class="badge badge-status-${k.status}">${k.status}</span>`;
+        const tierBadge = `<span class="badge badge-tier-${k.tier}">${k.tier}</span>`;
+        return `
+          <tr>
+            <td>
+              <span class="key-code" title="${k.key_id}">${k.masked_key}</span>
+              ${k.description ? `<div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 2px;">${k.description}</div>` : ''}
+            </td>
+            <td>${tierBadge}</td>
+            <td><strong style="color: var(--accent);">${k.limit_multiplier}x</strong></td>
+            <td>${statusBadge}</td>
+            <td style="color: var(--text-muted); font-size: 0.75rem;">${new Date(k.created_at * 1000).toLocaleDateString()}</td>
+            <td>
+              <div style="display: flex; gap: 0.35rem;">
+                <button class="btn btn-outline btn-sm" onclick="rotateKey('${k.key_id}')" title="Zero-downtime rotation">Rotate</button>
+                ${k.status !== 'revoked' ? `<button class="btn btn-danger btn-sm" onclick="revokeKey('${k.key_id}')" title="Revoke">Revoke</button>` : ''}
+              </div>
+            </td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+    function populateSimSelect(keys) {
+      const select = document.getElementById('simKeySelect');
+      select.innerHTML = keys.filter(k => k.status !== 'revoked').map(k => {
+        return `<option value="${k.key_id}">${k.masked_key} (${k.tier} - ${k.limit_multiplier}x)</option>`;
+      }).join('');
+    }
+
+    function autoUpdateMultiplier() {
+      const tier = document.getElementById('issueTier').value;
+      const multInput = document.getElementById('issueMultiplier');
+      if (tier === 'free') multInput.value = 1;
+      else if (tier === 'paid') multInput.value = 10;
+      else if (tier === 'enterprise') multInput.value = 50;
+    }
+
+    function openIssueModal() {
+      document.getElementById('issueModal').classList.add('active');
+    }
+    function closeIssueModal() {
+      document.getElementById('issueModal').classList.remove('active');
+    }
+
+    async function submitIssueKey() {
+      const tier = document.getElementById('issueTier').value;
+      const mult = parseInt(document.getElementById('issueMultiplier').value, 10);
+      const desc = document.getElementById('issueDesc').value;
+
+      try {
+        const res = await adminFetch(`${API_BASE}/keys`, {
+          method: 'POST',
+          body: JSON.stringify({ tier, limit_multiplier: mult, description: desc }),
+        });
+        if (!res.ok) {
+          alert('Failed to issue key: ' + (await res.text()));
+          return;
+        }
+        const data = await res.json();
+        alert(`API Key Issued Successfully!\n\nRaw Secret Key:\n${data.raw_key}\n\nSave this key now; it will not be shown again.`);
+        closeIssueModal();
+        fetchSummary();
+        fetchKeys();
+      } catch (err) {
+        alert('Error issuing key: ' + err);
+      }
+    }
+
+    async function rotateKey(keyId) {
+      if (!confirm(`Initiate zero-downtime key rotation for ${keyId}?\nOld key will expire in 3600 seconds.`)) return;
+      try {
+        const res = await adminFetch(`${API_BASE}/keys/${encodeURIComponent(keyId)}/rotate`, {
+          method: 'POST',
+          body: JSON.stringify({ grace_period_sec: 3600 }),
+        });
+        const data = await res.json();
+        alert(`Key rotated!\n\nNew Key:\n${data.new_key}\n\nOld key remains valid for ${data.grace_period_sec} seconds.`);
+        fetchSummary();
+        fetchKeys();
+      } catch (err) {
+        alert('Rotation error: ' + err);
+      }
+    }
+
+    async function revokeKey(keyId) {
+      if (!confirm(`Are you sure you want to REVOKE key ${keyId} immediately?`)) return;
+      try {
+        await adminFetch(`${API_BASE}/keys/${encodeURIComponent(keyId)}`, { method: 'DELETE' });
+        fetchSummary();
+        fetchKeys();
+      } catch (err) {
+        alert('Revocation error: ' + err);
+      }
+    }
+
+    async function runSimulatedRequest() {
+      const keyId = document.getElementById('simKeySelect').value;
+      if (!keyId) {
+        alert('Please select an API key to test.');
+        return;
+      }
+
+      const out = document.getElementById('simOutput');
+      out.innerHTML = `<div>Sending HTTP GET /api/test with X-API-Key...</div>`;
+
+      const t0 = performance.now();
+      try {
+        const res = await fetch('/api/test', {
+          headers: { 'X-API-Key': keyId }
+        });
+        const elapsed = (performance.now() - t0).toFixed(1);
+        const status = res.status;
+        const limit = res.headers.get('X-RateLimit-Limit') || '10';
+        const remaining = res.headers.get('X-RateLimit-Remaining') || '0';
+        const reset = res.headers.get('X-RateLimit-Reset') || '60';
+        const retryAfter = res.headers.get('Retry-After');
+
+        const remNum = parseInt(remaining, 10);
+        const limNum = parseInt(limit, 10);
+        const percent = Math.max(0, Math.min(100, Math.round((remNum / limNum) * 100)));
+
+        document.getElementById('quotaPercentText').innerText = `${percent}% (${remaining} / ${limit})`;
+        const bar = document.getElementById('quotaBar');
+        bar.style.width = `${percent}%`;
+        bar.style.backgroundColor = percent > 30 ? 'var(--accent)' : percent > 10 ? 'var(--warning)' : 'var(--danger)';
+
+        out.innerHTML = `
+          <div>Status: <span style="color: ${status === 200 ? 'var(--accent)' : 'var(--danger)'}; font-weight: bold;">${status} ${res.statusText}</span> (${elapsed}ms)</div>
+          <div>X-RateLimit-Limit: ${limit}</div>
+          <div>X-RateLimit-Remaining: ${remaining}</div>
+          <div>X-RateLimit-Reset: ${reset}s</div>
+          ${retryAfter ? `<div style="color: var(--danger);">Retry-After: ${retryAfter}s</div>` : ''}
+        `;
+      } catch (err) {
+        out.innerHTML = `<div style="color: var(--danger);">Network error: ${err}</div>`;
+      }
+    }
+
+    // Initial load
+    fetchSummary();
+    fetchKeys();
+  </script>
+</body>
+</html>

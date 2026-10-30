@@ -3,12 +3,15 @@
 import logging
 import os
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 import fakeredis.aioredis as fake_aio
 import redis.asyncio as aioredis
 from fastapi import FastAPI
-from starlette.responses import Response
+from starlette.responses import HTMLResponse, Response
 
+from src.api.admin import get_admin_key_manager
+from src.api.admin import router as admin_router
 from src.api.compare import router as compare_router
 from src.middleware.rate_limit_middleware import RateLimitMiddleware
 from src.monitoring.metrics import get_metrics_payload
@@ -81,11 +84,15 @@ def create_app(backend: str | None = None) -> FastAPI:
     # Initialize OpenTelemetry distributed tracing
     setup_tracing(application)
 
+    # Shared persistent API key manager
+    key_manager = get_admin_key_manager()
+
     # Attach production rate limiting middleware
     application.add_middleware(
         RateLimitMiddleware,
         redis_client=redis_sync,
         async_redis_client=redis_async,
+        key_manager=key_manager,
     )
 
     @application.get("/")
@@ -118,6 +125,20 @@ def create_app(backend: str | None = None) -> FastAPI:
 
     # Mount Week 12 Algorithm Comparison Engine
     application.include_router(compare_router)
+
+    # Mount Week 23 Multi-Tenant Admin API
+    application.include_router(admin_router)
+
+    @application.get("/admin", response_class=HTMLResponse)
+    @application.get("/dashboard", response_class=HTMLResponse)
+    def admin_dashboard():
+        """Serves the RateFortress multi-tenant administrative dashboard UI."""
+        html_path = Path("templates/admin.html")
+        if html_path.exists():
+            return HTMLResponse(content=html_path.read_text(encoding="utf-8"))
+        return HTMLResponse(
+            content="<h1>RateFortress Admin Dashboard</h1><p>Template file not found.</p>"
+        )
 
     return application
 

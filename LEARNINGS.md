@@ -734,3 +734,85 @@ A structured record of architectural decisions, DSA insights, failure modes, and
     2. Attackers defeat IP limits with proxy pools, defeat key limits with account cycling, and exploit header trust to spoof identity.
     3. True production resilience requires defense-in-depth: edge WAFs (TLS fingerprinting, ASN blocks), application-level distributed engines (RateFortress with atomic Lua and trusted proxy validation), behavioral anomaly scoring, and verified billing/identity gates at account creation.
 - **Milestone Reached:** 🎉 **Week 21 Complete! Adversary simulation, anti-spoofing trusted proxy validation, and behavioral shield operational.** All **172 automated tests passing**. Ready for Week 22: System Design Interview Mastery.
+
+---
+
+## 🏛️ Week 22 — System Design Interview Mastery (Days 106–110)
+
+### Day 106 — Capacity Planning & Back-of-the-Envelope Math (`docs/capacity_planning.md`)
+- **Mathematical Sizing for 1,000,000 req/s & 10M Active Users:**
+  - *Network Bandwidth:* At 250 bytes per TCP request/response, $1\text{M req/s} \times 250\text{ B} = 250\text{ MB/s} = \mathbf{2.0\text{ Gbps}}$ aggregate throughput.
+  - *Memory Overhead by Algorithm:*
+    - **GCRA:** $\approx 124\text{ bytes/key} \rightarrow \mathbf{1.24\text{ GB}}$ for 10M keys ($\mathbf{1.86\text{ GB}}$ with safety buffer).
+    - **Token Bucket:** $\approx 144\text{ bytes/key} \rightarrow \mathbf{1.44\text{ GB}}$ for 10M keys ($\mathbf{2.16\text{ GB}}$ with safety buffer).
+    - **Sliding Window Log:** $\approx 7,300\text{ bytes/key} \rightarrow \mathbf{73\text{ GB}}$ for 10M keys ($\mathbf{109.5\text{ GB}}$ with safety buffer).
+  - *Key Takeaway:* Sliding Window Log consumes **$58.8\times$ more memory** than Token Bucket at scale, proving why high-traffic public API gateways universally reject pure sliding window logs for standard endpoints.
+  - *Redis Cluster Sizing:* With single-core Lua execution capping safe throughput at $\approx 50,000\text{ ops/sec per shard}$, $1\text{M req/s}$ requires **20 Primary Shards + 20 Multi-AZ Replicas = 40 Redis nodes**.
+
+### Day 107 — Mock Interview #1: Single-Region Gateway (`docs/mock_interview_single_region.md`)
+- **Key Delivery Learnings:**
+  - Start with non-functional SLOs: latency budget ($p99 < 2.0\text{ ms}$) dictates in-memory Redis rather than relational DB or disk-backed storage.
+  - Defend Token Bucket clearly: decouples burst capacity from steady-state refill rate, matching real-world browser and mobile traffic patterns.
+  - Emphasize the concurrency failure mode: without atomic Lua scripts, concurrent threads create check-then-set race conditions that leak quota by $>150\%$.
+  - Articulate fail-open vs. fail-closed: fail-open preserves platform availability on content APIs during an infrastructure incident, while monetized checkout/AI endpoints should fail-closed with local in-memory fallback.
+
+### Day 108 — Mock Interview #2: Multi-Region Global Topology (`docs/mock_interview_multi_region.md`)
+- **The Transatlantic Speed-of-Light Bottleneck:**
+  - Fiber latency between US-East and EU-West is $\approx 80\text{ ms}$ round-trip. Synchronous cross-region database checks turn a 2ms rate check into an 82ms bottleneck.
+- **The Batched Token Lease Solution:**
+  - Local regions operate autonomous local Redis clusters.
+  - A global coordinator allocates quota in **token batch leases** (e.g., chunks of 20 tokens with a 5-second TTL).
+  - Gateways evaluate 95%+ of requests against local memory in $< 1\text{ ms}$, amortizing cross-region coordination by $20\times$.
+  - Network partitions degrade gracefully to local proportional caps without taking down the gateway.
+
+### Day 109 — Architecture Decision Record (`docs/ADR-001-algorithm-choice.md`)
+- **Why Formal ADRs Elevate Technical Signal:**
+  - Moving beyond "I picked Token Bucket because it's popular" to documenting the exact context, alternatives considered, quantitative tradeoffs, and operational consequences using the standard Michael Nygard ADR format.
+  - Backed by our empirical benchmark data: GCRA (3.3M req/s pure Python, 6.7k req/s Redis) and Token Bucket (2.1M req/s pure Python, 6.5k req/s Redis) cited directly in the record.
+
+### Day 110 — Review, Interview Prep & Automated Math Validation
+- **Artifacts:** Updated `docs/interview_prep_and_defense.md` with capacity planning flashcards and multi-region defense scripts.
+- **Automated Validation:** Created `tests/test_system_design_calculations.py` to assert that all capacity planning equations, memory ratios, and ADR benchmark citations are programmatically verified in CI.
+- **Milestone Reached:** 🎉 **Week 22 Complete! System design interview mastery, capacity planning, and formal ADR documented and tested.**
+
+---
+
+## 🖥️ Week 23 — Multi-Tenant Admin Dashboard (Days 111–115)
+
+### Day 111 — Designing the Multi-Tenant Admin API (`src/api/admin.py`)
+- **Security Invariants for Administrative Endpoints:**
+  - Regular API keys must never grant administrative access. Administrative operations (`/api/v1/admin/*`) require dedicated admin credentials (`X-Admin-Key` or `Authorization: Bearer`).
+  - Validation uses constant-time comparison (`hmac.compare_digest`) to prevent timing attacks.
+- **Endpoints Implemented:**
+  - `GET /api/v1/admin/keys`: List all keys, metadata, tier, limit multiplier, and lifecycle status.
+  - `POST /api/v1/admin/keys`: Cryptographically secure key generation with tier and custom rate multipliers.
+  - `GET /api/v1/admin/keys/{key_id}`: Key inspection with secret masking.
+  - `PATCH /api/v1/admin/keys/{key_id}`: Real-time tier upgrades and multiplier adjustments.
+  - `POST /api/v1/admin/keys/{key_id}/rotate`: Zero-downtime key rotation with dual-validity grace periods.
+  - `DELETE /api/v1/admin/keys/{key_id}`: Immediate key revocation.
+  - `GET /api/v1/admin/keys/{key_id}/usage`: Real-time tenant quota consumption and status.
+  - `GET /api/v1/admin/summary`: Global system telemetry and tier distribution.
+
+### Day 112 — Persistent Key Store (`src/storage/key_store.py` & `scripts/seed_admin_keys.py`)
+- **Surviving Restarts Without Data Loss:**
+  - Built `KeyStore` abstract protocol with `RedisKeyStore` (persisting metadata in Redis hashes and active key sets) and `MemoryKeyStore` (in-memory fallback for testing).
+  - Integrated `KeyStore` into `APIKeyManager` so newly issued or rotated keys persist across server restarts.
+  - Created `scripts/seed_admin_keys.py` to seed default demo keys (`key_free_abc`, `key_paid_xyz`, `key_enterprise_999`).
+
+### Days 113 & 114 — Modern Admin Dashboard UI (`templates/admin.html`)
+- **UI Architecture:**
+  - Served at `GET /admin` and `GET /dashboard` directly via FastAPI `HTMLResponse`.
+  - Built with clean, responsive dark-themed styling without bulky third-party JavaScript dependencies.
+  - Features:
+    1. *Real-Time Stat Cards:* Active Keys, Total Keys, Rotating Keys, Engine Health.
+    2. *Tenant Management Table:* Filter by tier/status, masked keys, badges, and action triggers.
+    3. *Modals:* Interactive forms for issuing new keys, updating tiers, and initiating zero-downtime key rotations.
+    4. *Live Rate Limit Simulator:* An embedded interactive console allowing administrators to fire live test requests with any tenant key to `/api/test`, displaying live HTTP response status, latency, and a visual progress bar reflecting remaining quota!
+
+### Day 115 — Integration Testing & Verification (`tests/test_admin_api.py`)
+- **Comprehensive Test Suite:**
+  - Tested unauthorized rejection (401) on missing/invalid admin tokens and regular user keys.
+  - Verified full CRUD lifecycle: issuance, retrieval, tier patching, zero-downtime rotation, revocation, and summary metrics.
+  - Validated middleware integration: newly issued keys with 50x multipliers immediately take effect in `RateLimitMiddleware` (e.g. limit expands from 10 to 500).
+  - Tested `RedisKeyStore` persistence lifecycle and dashboard UI endpoints.
+- **Milestone Reached:** 🎉 **Week 23 Complete! Multi-tenant admin API, persistent key store, seed automation, and interactive admin dashboard operational.** Test suite expanded to **180 automated tests passing with zero failures**.

@@ -23,6 +23,7 @@
 - **Dual Transport (REST & gRPC):** Exposes rate limiting both as FastAPI ASGI middleware and as a high-throughput binary gRPC microservice (`proto/ratefortress.proto`).
 - **Atomic Concurrency (Zero Race Conditions):** Consolidated bounds checking, counter increments, and timestamp trimming into atomic Lua scripts (`EVALSHA`) in Redis, eliminating check-and-set concurrency leaks (verified under 50-thread concurrent stress).
 - **FastAPI Middleware Layer:** Pluggable ASGI middleware supporting hierarchical route rules via an `EndpointTrie`, tier multipliers (Free 1x, Paid 10x, Enterprise 50x), and RFC-compliant rate limit headers (`X-RateLimit-Limit`, `Remaining`, `Reset`, `Retry-After`).
+- **Multi-Tenant Admin Dashboard & API (`/admin` & `/api/v1/admin/*`):** Full-featured administrative control plane for issuing, updating, and revoking API keys, initiating zero-downtime key rotation with dual-validity grace periods, persistent storage across Redis hashes, and an interactive live rate-limit test console.
 - **Circuit Breaker Fail-Open Resilience:** Protects downstream APIs from Redis outages. Automatically trips open after consecutive timeouts, failing open to preserve service availability.
 - **Algorithm Comparison Engine (`/compare`):** An interactive endpoint (JSON & responsive Jinja2 HTML) evaluating synthetic traffic across all algorithms simultaneously with microsecond latency instrumentation and empirical fairness analysis (Uniform vs. Skewed).
 - **Full Observability Stack:** Real-time Prometheus metrics (`/metrics`), live provisioned Grafana dashboards, structured JSON logging for Loki/Promtail, and OpenTelemetry distributed tracing spans.
@@ -59,12 +60,16 @@ ratefortress/
 │   ├── monitoring/     # Prometheus metrics, structured JSON logging, OpenTelemetry tracing
 │   └── storage/        # Redis connection pools, Lua scripts (atomic EVALSHA)
 ├── proto/              # Protocol Buffers definitions (ratefortress.proto)
-├── templates/          # Jinja2 HTML responsive comparison dashboard
-├── tests/              # 172 automated tests (unit, concurrency, property, integration)
+├── templates/          # Jinja2 comparison dashboard & Admin UI (templates/admin.html)
+├── tests/              # 180 automated tests (unit, concurrency, property, integration)
 ├── benchmarks/         # Micro-benchmarking harness & boundary burst reproducers
 ├── loadtests/          # Locust & k6 distributed load, spike & soak testing scripts
 ├── monitoring/         # Grafana dashboard provisioning, alert rules, Promtail & Prometheus configs
 ├── docs/               # System design specs, Runbooks, ADRs, and Architecture diagrams
+│   ├── capacity_planning.md        # 1M req/s global capacity planning & Redis cluster sizing
+│   ├── mock_interview_single_region.md # Single-region gateway mock interview whiteboarding script
+│   ├── mock_interview_multi_region.md  # Multi-region global topology & batched token leasing
+│   ├── ADR-001-algorithm-choice.md # Michael Nygard ADR defending Token Bucket & GCRA
 │   ├── redteam_report.md           # Red team adversary simulation, header spoofing & abuse report
 │   ├── comparative_benchmark_article.md # Comprehensive systems publication & benchmark report
 │   ├── scaling.md                  # Redis Cluster hash slots & multi-region scaling plan
@@ -82,7 +87,7 @@ ratefortress/
 ├── docker-compose.yml  # Full-stack local orchestration (App + Redis + Prometheus + Grafana + Loki + Promtail)
 ├── Dockerfile          # Hardened Python 3.13-slim image with healthchecks
 ├── requirements.txt    # Project dependencies
-├── LEARNINGS.md        # Comprehensive 86-day daily engineering log
+├── LEARNINGS.md        # Comprehensive 115-day daily engineering log
 ├── BENCHMARKS.md       # Comparative performance & stress test data
 └── building_plan.md    # 29-week engineering roadmap
 ```
@@ -91,8 +96,8 @@ ratefortress/
 
 ## 🚦 Status & Milestones
 
-- **Current Status:** **Week 15 — Documentation, Demo, Interview Prep & Resume Bullet Complete (Core 15-Week Production Foundation Complete!)** 🎉
-- **Next Milestone:** Weeks 16–20 — Research Layer & Optional Extensions (Days 87–100: Multi-region consistent hashing, dynamic rate limits, distributed sliding logs)
+- **Current Status:** **Week 23 — Multi-Tenant Admin Dashboard & System Design Mastery Complete (Days 106–115 Complete!)** 🎉
+- **Next Milestone:** Week 24 — Real Stripe Metered Billing & Usage Overage (Days 116–120)
 
 ---
 
