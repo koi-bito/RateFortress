@@ -36,6 +36,7 @@ This document provides a comprehensive, publication-grade engineering report tra
 | **Sliding Window Counter** | **2,115,551 req/s** | 5,000 | 5,000 | 0.0047s | $O(1)$ (~64 bytes) | None | **No (Smooth Approximation)** |
 | **Token Bucket** | **2,066,073 req/s** | 5,000 | 5,000 | 0.0048s | $O(1)$ (~48 bytes) | Configurable burst | **No** |
 | **Leaky Bucket** | **2,580,845 req/s** | 5,000 | 5,000 | 0.0039s | $O(\text{Queue size})$ | Strict queue outflow | **No** |
+| **GCRA (Cell Rate)** | **3,303,492 req/s** | 5,000 | 5,000 | 0.0030s | $O(1)$ (~32 bytes) | Configurable tolerance $\tau$ | **No** |
 
 ### Empirical Tradeoff Evidence: The Window Boundary Problem (Day 15)
 Tested via `benchmarks/compare_window_boundary.py`:
@@ -72,6 +73,7 @@ Tested via `benchmarks/compare_window_boundary.py`:
 | **Sliding Window Log (Lua)** | Redis Sorted Set (`ZSET`) | **Atomic Lua Script** | **5,858 req/s** | 10 Allowed / 40 Blocked | **Zero (0%)** |
 | **Token Bucket (Lua)** | Redis Hash (`HMGET`/`HMSET`) | **Atomic Lua Script** | **6,533 req/s** | 10 Allowed / 40 Blocked | **Zero (0%)** |
 | **Leaky Bucket (Lua)** | Redis Hash (`HMGET`/`HMSET`) | **Atomic Lua Script** | **6,310 req/s** | 10 Allowed / 40 Blocked | **Zero (0%)** |
+| **GCRA (Lua)** | Redis String (`GET`/`SET`) | **Atomic Lua Script** | **6,695 req/s** | 10 Allowed / 40 Blocked | **Zero (0%)** |
 
 ### Concurrency Deep-Dive: Why Lua Scripting Is Required
 Without atomic Lua scripting, Redis rate limiters (such as Sliding Window Log and Sliding Window Counter) suffer classic **check-then-insert** race conditions. Under a 50-thread concurrent surge, separate reads observe count $< 10$ before any thread executes a write, admitting 18 to 25 requests. Consolidating all logic into atomic Lua scripts (`redis_sliding_window_log.lua`, `redis_sliding_window_counter.lua`, `redis_token_bucket.lua`, and `redis_leaky_bucket.lua`) guarantees strict 0% over-admission across all concurrent runs.

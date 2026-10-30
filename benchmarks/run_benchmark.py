@@ -11,6 +11,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.algorithms.fixed_window import FixedWindowCounter
+from src.algorithms.gcra import GCRA
 from src.algorithms.leaky_bucket import LeakyBucket
 from src.algorithms.sliding_window_counter import SlidingWindowCounter
 from src.algorithms.sliding_window_log import SlidingWindowLog
@@ -48,7 +49,7 @@ def benchmark_algorithm(
 
 def run_all_benchmarks():
     print("==================================================")
-    print("      RateFortress 5-Algorithm Benchmark Suite    ")
+    print("      RateFortress 6-Algorithm Benchmark Suite    ")
     print("==================================================")
 
     # Standard benchmark profile: 10,000 requests across 100 users, limit=50 per 10s
@@ -58,6 +59,7 @@ def run_all_benchmarks():
         (SlidingWindowCounter(limit=50, window_seconds=10), "Sliding Window Counter"),
         (TokenBucket(capacity=50, refill_rate_per_sec=5.0), "Token Bucket"),
         (LeakyBucket(capacity=50, leak_rate_per_sec=5.0), "Leaky Bucket"),
+        (GCRA(limit=50, period=10.0), "GCRA (Cell Rate)"),
     ]
 
     results = []

@@ -79,7 +79,7 @@ class CircuitBreaker:
                 self.failures = 0
 
             return result
-        except Exception:  # noqa: BLE001
+        except Exception:
             self.failures += 1
             if (
                 self.failures >= self.failure_threshold
@@ -127,7 +127,7 @@ class CircuitBreaker:
                 self.failures = 0
 
             return result
-        except Exception:  # noqa: BLE001
+        except Exception:
             self.failures += 1
             if (
                 self.failures >= self.failure_threshold

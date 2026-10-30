@@ -12,8 +12,10 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.algorithms.fixed_window import FixedWindowCounter
+from src.algorithms.gcra import GCRA
 from src.algorithms.leaky_bucket import LeakyBucket
 from src.algorithms.redis_fixed_window import RedisFixedWindow
+from src.algorithms.redis_gcra import RedisGCRA
 from src.algorithms.redis_leaky_bucket import RedisLeakyBucket
 from src.algorithms.redis_sliding_window_counter import RedisSlidingWindowCounter
 from src.algorithms.redis_sliding_window_log import RedisSlidingWindowLog
@@ -75,6 +77,10 @@ def main():
     py_lb = LeakyBucket(capacity=50, leak_rate_per_sec=5.0)
     redis_lb = RedisLeakyBucket(redis_client, capacity=50, leak_rate_per_sec=5.0)
 
+    # GCRA (Cell Rate)
+    py_gcra = GCRA(limit=50, period=10.0)
+    redis_gcra = RedisGCRA(redis_client, limit=50, period=10.0)
+
     print("==================================================")
     print("      In-Memory vs Redis Rate Limiter Benchmarks  ")
     print("==================================================")
@@ -90,6 +96,8 @@ def main():
         (redis_tb, "Redis Token Bucket (Atomic Lua)"),
         (py_lb, "Pure Python Leaky Bucket"),
         (redis_lb, "Redis Leaky Bucket (Atomic Lua)"),
+        (py_gcra, "Pure Python GCRA (Cell Rate)"),
+        (redis_gcra, "Redis GCRA (Atomic Lua)"),
     ]
 
     results = []

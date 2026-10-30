@@ -6,7 +6,6 @@ conform exactly to the required PromQL schema.
 """
 
 import sys
-import time
 from pathlib import Path
 
 # Add project root to sys.path

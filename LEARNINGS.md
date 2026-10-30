@@ -618,3 +618,73 @@ A structured record of architectural decisions, DSA insights, failure modes, and
   - **Beware of module-level application instantiation in test suites:** Top-level singletons (`client = TestClient(app)`) evaluate once at import time and freeze their dependencies, completely bypassing per-test fixtures.
   - **Always prefer `127.0.0.1` over `localhost` in containerized CI environments:** Eliminates dual-stack IPv6 DNS resolution mismatches between host runners and container bridge interfaces.
   - **Resilience mechanisms can mask infrastructure bugs in tests:** A properly functioning fail-open circuit breaker makes a broken database connection look like a successful HTTP 200 request; always verify telemetry and underlying storage logs when rate limits appear to "disappear".
+
+
+---
+
+## 🔬 Weeks 16–20 — Research Layer & Advanced Extensions (Days 87–100)
+
+### Days 87–88 — Comparative Benchmark Publication (`docs/comparative_benchmark_article.md`)
+- **Core Insights:** Consolidated empirical data across all rate limiting algorithms. In-memory pure Python achieves 2.0M–3.4M req/s, whereas distributed Redis achieves 5.8k–43.3k req/s.
+- **The Boundary Burst Threat:** Re-verified that Fixed Window Counter leaks 10/10 requests (2x limit) under window-boundary clustering, while Sliding Window Log and Sliding Window Counter strictly preserve nominal limits.
+- **Artifact:** Published `docs/comparative_benchmark_article.md` with system design decision trees and full empirical matrices.
+
+### Day 89 — Developer Publication Syndication (`docs/devto_article.md`)
+- **Syndication Strategy:** Formatted publication draft for Dev.to, Hashnode, and Medium with SEO tags, canonical URL mapping to portfolio, and developer-focused narrative framing.
+
+### Day 90 — Community Showcase & Technical Defense (`docs/community_showcase_and_defense.md`)
+- **Showcase Framing:** Prepared launch copy for Hacker News ("Show HN") and Reddit r/Python.
+- **Verbal Defense Strategies:** Formulated rigorous technical defenses addressing:
+  - *Python vs. Go/Rust:* Demonstrating that offloading coordination to atomic Lua scripts and async event loops handles 1,400+ req/s per worker core with high developer ergonomic clarity.
+  - *Redis Cell Module vs. Vanilla Lua:* Highlighting that pure Lua runs across all managed cloud providers (AWS ElastiCache, GCP Memorystore) without custom binary module installation restrictions.
+
+### Day 91 — Post-Launch Lessons Learned (`docs/lessons_learned_followup.md`)
+- **Key Realizations:**
+  1. *Sliding Window Log is not a universal silver bullet:* Despite mathematical precision, $O(N)$ memory growth in Redis Sorted Sets makes it unsuitable for high-volume edge proxies.
+  2. *Connection Pool Sizing Trap:* Expanding connection pools does not solve event-loop blocking when synchronous drivers halt OS worker threads; true non-blocking `redis.asyncio` is required.
+
+### Day 92 — 6th Algorithm: GCRA (Generic Cell Rate Algorithm)
+- **Mathematical Elegance:**
+  - Implemented GCRA (`src/algorithms/gcra.py`, `redis_gcra.py`, `async_redis_gcra.py`, `redis_gcra.lua`).
+  - Replaces token counters and timestamp logs with a single **Theoretical Arrival Time (TAT)**: $\text{new\_TAT} = \max(\text{now}, \text{TAT}) + \text{emission\_interval}$.
+  - Burst tolerance $\tau = \text{emission\_interval} \times (\text{limit} - 1)$ defines the horizon. If $\text{new\_TAT} - \text{now} > \tau + \text{emission\_interval}$, request is throttled.
+- **Empirical Throughput:**
+  - Pure Python: **3,303,492 req/s** (fastest $O(1)$ algorithm).
+  - Distributed Redis Lua: **6,695 req/s** with strict 0% race condition under concurrent load.
+  - Integrated into `/compare` engine and verified with automated test suites (`tests/test_gcra.py`, `tests/test_redis_gcra.py`).
+
+### Day 93 — Redis Cluster & Sharding Architecture (`docs/scaling.md`)
+- **Hash Slot Partitioning:** Analyzed Redis Cluster's 16,384 hash slots ($\text{CRC16}(\text{key}) \pmod{16384}$).
+- **The `CROSSSLOT` Hazard:** Lua scripts in Redis Cluster fail if operating across multiple keys in different slots.
+- **Why RateFortress is Cluster-Native:** 100% of RateFortress rate limiting Lua scripts operate on single client keys (`KEYS[1]`), guaranteeing zero `CROSSSLOT` exceptions across multi-node clusters.
+- **Multi-Region Latency Tradeoffs:** Documented local quota slicing, eventual consistency with asynchronous cross-region reconciliation, and CRDT replication.
+
+### Day 94 — High-Throughput gRPC Alternative Interface
+- **Protocol Buffers & HTTP/2 Transport:**
+  - Authored `proto/ratefortress.proto` defining `CheckRateLimit` and `GetQuota` RPCs.
+  - Implemented `RateLimiterService` (`src/grpc_service/service.py`) supporting all 6 algorithms, tier multipliers, and microsecond evaluation.
+- **Why Microservices Prefer gRPC over REST:**
+  - *Internal Service-to-Service:* Binary Protobuf serialization avoids JSON string parsing overhead; HTTP/2 multiplexes hundreds of concurrent RPCs over a single persistent TCP connection.
+  - *Public-Facing APIs:* REST/JSON remains dominant due to universal browser support, simple curl/HTTP tooling, and zero client stub compilation requirements.
+- **Verification:** Verified with `tests/test_grpc_service.py` across limits, burst throttling, and GCRA algorithm selection.
+
+### Day 95 — Reusable Middleware Package (`pyproject.toml`)
+- **Packaging Architecture:**
+  - Configured `pyproject.toml` with `setuptools.build_meta`, defining `ratefortress` as an installable PyPI distribution.
+  - Authored `docs/package_guide.md` illustrating 5-line integration into external FastAPI projects.
+
+### Day 96 — Security Hardening & Zero-Downtime Key Rotation
+- **Timing-Attack Resistance:** Implemented `APIKeyManager.verify_key` using `hmac.compare_digest` to prevent side-channel timing leaks.
+- **Zero-Downtime Key Rotation:** Supported dual-validity grace periods: new keys activate immediately while old keys remain valid until grace expiration.
+- **Observability Credential Masking:** Configured `JSONLogFormatter(mask_secrets=True)` and `mask_key` utility to truncate secret tokens (`key_...123`), preventing credential leaks in logs.
+- **Internal Tooling Quotas:** Implemented explicit rate-limiting rules protecting `/compare` (30 req/min) and `/metrics` (60 req/min) against CPU burn and scraping DoS.
+
+### Days 97–99 — Peer Review, Codebase Polish & Capstone Deep Dive
+- **Architectural Audit:** Completed `docs/peer_review.md` validating atomicity, resource lifecycles, and security invariants.
+- **Zero-Warning Code Quality:** Resolved all Ruff linter checks across the entire repository.
+- **Senior Technical Walkthrough:** Authored `docs/capstone_deep_dive_script.md` providing a 15-minute whiteboard defense of every architectural layer.
+
+### Day 100 — Capstone Milestone Reached & Retrospective
+- **Hardest Technical Challenge Across Weeks 1–20:** Eliminating TOCTOU check-then-set race conditions in Redis under concurrent multi-threaded spikes. Solved by replacing naive multi-call pipelines with atomic Lua scripts evaluated in Redis's single-threaded event loop, yielding an empirical 0% over-admission rate.
+- **What We Would Do Differently:** Adopt `redis.asyncio` from Day 34 rather than starting with synchronous `redis.Redis`, avoiding the event-loop starvation debugging cycle encountered during 500-user Locust load testing.
+- **Milestone Reached:** 🎉 **Weeks 16–20 Research Layer & Advanced Extensions Complete!** Full project suite expanded to **165 automated tests passing with zero failures**, 6 algorithms, REST + gRPC interfaces, and comprehensive production documentation. Ready for Week 21: Adversarial Testing & Abuse Simulation.

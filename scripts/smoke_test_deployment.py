@@ -65,7 +65,7 @@ def run_smoke_tests(base_url: str, api_key: str | None = None) -> bool:
     try:
         data = json.loads(body)
         is_healthy = status == 200 and data.get("status") == "healthy"
-    except Exception:  # noqa: BLE001
+    except Exception:
         is_healthy = False
     check("Health Check (/health)", is_healthy, f"(HTTP {status})")
 
@@ -75,7 +75,7 @@ def run_smoke_tests(base_url: str, api_key: str | None = None) -> bool:
     try:
         data = json.loads(body)
         has_metadata = status == 200 and data.get("service") == "RateFortress"
-    except Exception:  # noqa: BLE001
+    except Exception:
         has_metadata = False
     check("Root Service Metadata (/)", has_metadata, f"(HTTP {status})")
 
@@ -90,8 +90,8 @@ def run_smoke_tests(base_url: str, api_key: str | None = None) -> bool:
     status, _, body = make_request(compare_url)
     try:
         data = json.loads(body)
-        has_compare = status == 200 and "scenario" in data and len(data.get("results", [])) == 5
-    except Exception:  # noqa: BLE001
+        has_compare = status == 200 and "scenario" in data and len(data.get("results", [])) in (5, 6)
+    except Exception:
         has_compare = False
     check("Comparison Engine JSON (/compare)", has_compare, f"(HTTP {status})")
 

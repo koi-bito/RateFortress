@@ -19,6 +19,7 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 
 from src.algorithms.fixed_window import FixedWindowCounter
+from src.algorithms.gcra import GCRA
 from src.algorithms.leaky_bucket import LeakyBucket
 from src.algorithms.sliding_window_counter import SlidingWindowCounter
 from src.algorithms.sliding_window_log import SlidingWindowLog
@@ -154,6 +155,15 @@ TRADEOFFS_CATALOG: dict[str, dict[str, str]] = {
         "weakness": "Zero burst tolerance; legitimately bursty clients suffer high rejection rates.",
         "ideal_scenario": "Ingestion gateways fronting fragile backend dependencies (legacy databases, payment gateways, heavy PDF workers) that cannot tolerate bursts.",
     },
+    "gcra": {
+        "accuracy": "Exact virtual cell scheduling. Uses Theoretical Arrival Time (TAT) to enforce limits with zero mathematical boundary drift.",
+        "memory": "O(1) strictly minimal (~32 bytes per user in Redis, tracking a single float timestamp).",
+        "performance": "Ultra high. In-memory ~3.3M req/s, Redis Lua ~6.7k req/s.",
+        "fairness": "Similar to Token Bucket: permits controlled bursts up to burst tolerance tau, while steady clients pass cleanly.",
+        "strength": "Production standard used by Stripe and Redis Cell. Elegant single-key state without float token decay math.",
+        "weakness": "Non-trivial conceptual model compared to simple counters.",
+        "ideal_scenario": "High-throughput cloud APIs, payment platforms, and multi-tenant SaaS where low memory overhead and burst support are both required.",
+    },
 }
 
 ALGORITHMS_REGISTRY: list[tuple[str, str, Any]] = [
@@ -181,6 +191,11 @@ ALGORITHMS_REGISTRY: list[tuple[str, str, Any]] = [
         "leaky_bucket",
         "Leaky Bucket",
         lambda l, w: LeakyBucket(capacity=l, leak_rate_per_sec=float(l) / float(w)),
+    ),
+    (
+        "gcra",
+        "GCRA (Cell Rate)",
+        lambda l, w: GCRA(limit=l, period=float(w)),
     ),
 ]
 

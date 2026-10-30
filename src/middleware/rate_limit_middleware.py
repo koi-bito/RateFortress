@@ -265,7 +265,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             if inspect.iscoroutinefunction(func):
                 return await func(client_id)
             return func(client_id)
-        except Exception:  # noqa: BLE001
+        except Exception:
             return default
 
     async def _safe_retry_after(self, limiter: Any, client_id: str) -> int:
@@ -278,7 +278,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             if inspect.iscoroutinefunction(func):
                 return await func(client_id)
             return func(client_id)
-        except Exception:  # noqa: BLE001
+        except Exception:
             return 1
 
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
@@ -387,7 +387,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                 remaining = await self._safe_remaining(
                     limiter, client_id, nominal_limit
                 )
-            except Exception:  # noqa: BLE001
+            except Exception:
                 remaining = nominal_limit
 
             response.headers["X-RateLimit-Limit"] = str(nominal_limit)

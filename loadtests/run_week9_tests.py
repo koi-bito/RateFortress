@@ -301,7 +301,7 @@ def generate_soak_memory_chart(memory_timeline: list[dict], output_path: Path):
     rss = [pt["rss_mb"] for pt in memory_timeline]
     vms = [pt["vms_mb"] for pt in memory_timeline]
 
-    fig, ax1 = plt.subplots(figsize=(10, 5), dpi=150)
+    _fig, ax1 = plt.subplots(figsize=(10, 5), dpi=150)
     
     ax1.plot(times, rss, color="#2b5c8f", linewidth=2.5, label="Resident Set Size (RSS)")
     ax1.plot(times, vms, color="#e67e22", linewidth=1.8, linestyle="--", label="Virtual Memory (VMS)")
@@ -340,7 +340,7 @@ def generate_comparison_chart(k6_data: dict, locust_data: dict, spike_data: dict
     p95 = [k6_data.get("p95", 0), locust_data.get("p95", 0), spike_data.get("p95", 0)]
     p99 = [k6_data.get("p99", 0), locust_data.get("p99", 0), spike_data.get("p99", 0)]
 
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5.5), dpi=150)
+    _fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5.5), dpi=150)
 
     # Throughput bar chart
     bars1 = ax1.bar(tools, rps, color=["#16a085", "#2980b9", "#d35400"], width=0.5)

@@ -1,0 +1,78 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ratefortress"
+version = "1.0.0"
+description = "Distributed, production-grade rate limiting engine with 6 algorithms, Redis Lua atomicity, and pluggable ASGI middleware."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [
+    { name = "RateFortress Contributors" }
+]
+keywords = [
+    "rate-limiting",
+    "token-bucket",
+    "leaky-bucket",
+    "gcra",
+    "sliding-window",
+    "fastapi",
+    "redis",
+    "distributed-systems",
+]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Internet :: WWW/HTTP :: WSGI :: Middleware",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+dependencies = [
+    "fastapi>=0.110.0",
+    "starlette>=0.36.0",
+    "redis>=5.0.0",
+    "pydantic>=2.0.0",
+    "prometheus-client>=0.20.0",
+    "opentelemetry-api>=1.20.0",
+]
+
+[project.optional-dependencies]
+grpc = [
+    "grpcio>=1.60.0",
+    "protobuf>=4.25.0",
+]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "fakeredis>=2.20.0",
+    "httpx>=0.27.0",
+    "ruff>=0.3.0",
+    "black>=24.0.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = [
+    "proto",
+    "src/grpc_service/ratefortress_pb2*.py",
+    "ratefortress_env",
+]
+lint.ignore = [
+    "BLE001",
+    "C408",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"

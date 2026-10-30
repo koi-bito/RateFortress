@@ -1,0 +1,34 @@
+syntax = "proto3";
+
+package ratefortress;
+
+service RateLimiter {
+    rpc CheckRateLimit (RateLimitRequest) returns (RateLimitResponse);
+    rpc GetQuota (QuotaRequest) returns (QuotaResponse);
+}
+
+message RateLimitRequest {
+    string client_id = 1;
+    string endpoint = 2;
+    string tier = 3;
+    string algorithm = 4;
+    int32 cost = 5;
+}
+
+message RateLimitResponse {
+    bool allowed = 1;
+    int32 remaining = 2;
+    int32 retry_after_seconds = 3;
+    int32 limit = 4;
+}
+
+message QuotaRequest {
+    string client_id = 1;
+    string endpoint = 2;
+    string algorithm = 3;
+}
+
+message QuotaResponse {
+    int32 limit = 1;
+    int32 remaining = 2;
+}

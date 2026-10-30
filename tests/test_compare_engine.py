@@ -29,7 +29,7 @@ def test_compare_endpoint_json_default():
     assert scenario["total_requests"] == 5000
 
     results = data["results"]
-    assert len(results) == 5
+    assert len(results) == 6
 
     algo_names = [r["algorithm"] for r in results]
     assert set(algo_names) == {
@@ -38,6 +38,7 @@ def test_compare_endpoint_json_default():
         "sliding_window_counter",
         "token_bucket",
         "leaky_bucket",
+        "gcra",
     }
 
     for r in results:
@@ -93,6 +94,7 @@ def test_compare_endpoint_html_content_negotiation():
     assert "Sliding Window Counter" in body
     assert "Token Bucket" in body
     assert "Leaky Bucket" in body
+    assert "GCRA (Cell Rate)" in body
     assert "Run Simulation ⚡" in body
 
 

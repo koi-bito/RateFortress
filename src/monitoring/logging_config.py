@@ -16,6 +16,10 @@ from pathlib import Path
 class JSONLogFormatter(logging.Formatter):
     """Custom logging formatter that serializes LogRecord instances to JSON strings."""
 
+    def __init__(self, mask_secrets: bool = False, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.mask_secrets = mask_secrets
+
     def format(self, record: logging.LogRecord) -> str:
         log_payload = {
             "timestamp": datetime.fromtimestamp(record.created, tz=UTC).isoformat(),
@@ -41,7 +45,18 @@ class JSONLogFormatter(logging.Formatter):
         ]
         for field in extra_fields:
             if hasattr(record, field):
-                log_payload[field] = getattr(record, field)
+                val = getattr(record, field)
+                # Mask secret API keys from plaintext log payloads
+                if (
+                    self.mask_secrets
+                    and field == "client_id"
+                    and isinstance(val, str)
+                    and val.startswith(("key_", "rf_"))
+                    and len(val) > 8
+                ):
+                    log_payload[field] = f"{val[:4]}...{val[-3:]}"
+                else:
+                    log_payload[field] = val
 
         if record.exc_info:
             log_payload["exception"] = self.formatException(record.exc_info)

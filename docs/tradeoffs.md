@@ -1,11 +1,12 @@
 # RateLimiting Algorithm Tradeoffs & Evaluation Matrix
 
-This document provides the definitive comparative reference for the five rate-limiting algorithms implemented in **RateFortress**:
+This document provides the definitive comparative reference for the six rate-limiting algorithms implemented in **RateFortress**:
 1. **Fixed Window Counter**
 2. **Sliding Window Log**
 3. **Sliding Window Counter**
 4. **Token Bucket**
 5. **Leaky Bucket**
+6. **GCRA (Generic Cell Rate Algorithm)**
 
 The qualitative evaluations and empirical measurements below power the `/compare` endpoint and document system design tradeoffs across accuracy, memory footprint, computational performance, and fairness.
 
@@ -20,6 +21,7 @@ The qualitative evaluations and empirical measurements below power the `/compare
 | **Sliding Window Counter** | $O(1)$ | $O(1)$ (2 counter values) | **Negligible** (bounded error < 0.05%) | **~7,200 req/s** | Balanced & smoothed | Production sweet spot (accuracy + $O(1)$ RAM) | Slight approximation bias on non-uniform load |
 | **Token Bucket** | $O(1)$ | $O(1)$ (tokens count + timestamp) | **None** (governed by capacity & refill) | **~6,530 req/s** | **Favors bursty clients** (accumulates idle credit) | Accommodates natural bursts & batch traffic | Downstream services may receive sudden traffic spikes |
 | **Leaky Bucket** | $O(1)$ | $O(1)$ (virtual queue depth + timestamp) | **None** (strictly smooth outflow rate) | **~6,310 req/s** | **Penalizes bursty clients** (enforces rigid pacing) | Protects fragile downstream dependencies | Drops valid requests during momentary bursts |
+| **GCRA** | $O(1)$ | $O(1)$ (single TAT timestamp ~32B) | **None** (governed by burst tolerance $\tau$) | **~6,695 req/s** | **Favors bursty clients** (up to tolerance $\tau$) | Mathematical elegance, minimal Redis memory | Non-trivial conceptual model for beginners |
 
 ---
 
@@ -60,6 +62,13 @@ The qualitative evaluations and empirical measurements below power the `/compare
 - **Performance:** Very high. Evaluated with a simple elapsed time calculation.
 - **Fairness:** Heavily **penalizes bursty clients**. A client sending a tight cluster of requests will rapidly exhaust buffer headroom and experience high HTTP 429 drop rates, whereas a steady client pacing requests uniformly will experience 0% drop rates.
 - **Single Ideal Scenario:** Ingestion gateways fronting fragile or slow backend resources (e.g., legacy enterprise databases, heavy PDF generators, external third-party webhooks) that collapse under instantaneous bursts and demand perfectly smooth, throttled throughput.
+
+### 6. GCRA (Generic Cell Rate Algorithm)
+- **Accuracy:** Exact virtual cell scheduling. Calculates Theoretical Arrival Time (TAT) to enforce limits with zero mathematical boundary drift.
+- **Memory:** $O(1)$ strictly minimal (~32 bytes per user in Redis, tracking a single float timestamp).
+- **Performance:** Outstanding (~3.3M req/s pure Python, ~6.7k req/s in Redis Lua).
+- **Fairness:** Similar to Token Bucket: permits controlled bursts up to burst tolerance $\tau$, while steady clients pass cleanly.
+- **Single Ideal Scenario:** Production cloud APIs, payment platforms (used by Stripe and Redis Cell), and multi-tenant SaaS where minimal Redis memory overhead and burst support are simultaneously required.
 
 ---
 

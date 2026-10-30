@@ -41,4 +41,10 @@ DEFAULT_ROUTE_RULES: dict[str, EndpointRule] = {
     "/api/expensive-endpoint": EndpointRule(
         limit=5, window_seconds=60, algorithm="sliding_window_log"
     ),
+    "/compare": EndpointRule(
+        limit=30, window_seconds=60, algorithm="sliding_window_counter"
+    ),
+    "/metrics": EndpointRule(
+        limit=60, window_seconds=60, algorithm="fixed_window"
+    ),
 }
