@@ -795,28 +795,39 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
 ---
 
-### Day 24 — HTTP 429 + Retry-After Headers
+### Day 24 — HTTP 429 + Rate Limit Headers
 
 **Time:** 3 hrs
 
 **What you're doing:** Matching the professional pattern used by Stripe/GitHub/OpenAI from Day 5's research.
 
+**Important — two header families, two different rules:**
+
+- `X-RateLimit-Limit` and `X-RateLimit-Remaining` go on EVERY response (allowed and blocked), so clients can see their quota at any time.
+- `Retry-After` goes ONLY on 429 responses (and optionally when `remaining == 0`). RFC 6585 and RFC 7231 reserve it strictly for 429/503 — attaching it to successful 200 responses violates the spec and causes standard HTTP clients and proxies to misinterpret a normal response as active throttling.
+
 **Tasks:**
 
-1. Update the middleware to return proper rate-limit headers on every response, not just 429s:
+1. Update the middleware to add `X-RateLimit-*` headers on every response:
 
 ```python
 response.headers["X-RateLimit-Limit"] = str(self.limiter.limit)
 response.headers["X-RateLimit-Remaining"] = str(max(0, self.limiter.limit - current_count))
-response.headers["Retry-After"] = str(retry_seconds)
 ```
 
-2. You'll need to expose a `remaining(user_id)` and `retry_after(user_id)` method on each algorithm class — add these now to Token Bucket and Fixed Window Counter at minimum.
-3. Test with `curl -i` to confirm headers appear correctly on both success and 429 responses.
+2. Add `Retry-After` ONLY when returning a 429:
 
-**You're done when:** Every response — allowed or blocked — includes correct `X-RateLimit-*` and `Retry-After` headers.
+```python
+if response.status_code == 429:
+    response.headers["Retry-After"] = str(retry_seconds)
+```
 
-**Write in LEARNINGS.md:** Why do well-designed APIs send rate limit headers on EVERY response, not just when you get blocked?
+3. Expose a `remaining(user_id)` and `retry_after(user_id)` method on each algorithm class — add these now to Token Bucket and Fixed Window Counter at minimum.
+4. Test with `curl -i` to confirm: `X-RateLimit-*` headers appear on both 200 and 429 responses; `Retry-After` appears ONLY on 429s.
+
+**You're done when:** A successful 200 response carries `X-RateLimit-Limit` and `X-RateLimit-Remaining` but NO `Retry-After`. A 429 response carries all three.
+
+**Write in LEARNINGS.md:** Why do well-designed APIs send `X-RateLimit-*` headers on every response but reserve `Retry-After` for blocked responses only?
 
 ---
 
@@ -1145,14 +1156,18 @@ import time
 import redis
 
 class RedisFixedWindow:
-    def __init__(self, redis_client: redis.Redis, limit: int, window_seconds: int):
+    def __init__(self, redis_client: redis.Redis, limit: int, window_seconds: int,
+                 namespace: str = "default"):
         self.r = redis_client
         self.limit = limit
         self.window_seconds = window_seconds
+        self.namespace = namespace  # identifies which endpoint/rule this instance serves
 
     def is_allowed(self, user_id: str) -> bool:
         current_window = int(time.time() // self.window_seconds)
-        key = f"fixed_window:{user_id}:{current_window}"
+        # namespace is REQUIRED in the key — without it, two endpoints using the same
+        # algorithm for the same user will share a counter and clobber each other's quota
+        key = f"fixed_window:{self.namespace}:{user_id}:{current_window}"
 
         count = self.r.incr(key)
         if count == 1:
@@ -1162,12 +1177,13 @@ class RedisFixedWindow:
         return count <= self.limit
 ```
 
-2. Why this is atomic: `INCR` on Redis is a single atomic operation server-side — two processes incrementing the same key at the same instant can never both read "4" and both write "5" (the race condition that would happen with a non-atomic read-modify-write in plain Python).
-3. Write a test that runs two `RedisFixedWindow` instances (simulating two app servers) pointed at the same Redis, and confirms they share state correctly.
+2. Why `namespace` matters: if two endpoints (e.g. `/api/search` limit=100 and `/api/export` limit=10) both use Fixed Window for the same user, without a namespace they would write to the same Redis key and share a single counter — effectively giving the user a combined 110-request budget instead of two independent limits. The namespace (set to the matched route pattern by the middleware) keeps every endpoint's counter isolated.
+3. Apply the same `namespace` parameter to EVERY Redis-backed algorithm you build from here on — Sliding Window Counter, Sliding Window Log, Token Bucket, and Leaky Bucket all need it in their key from day one, following the exact same pattern shown above.
+4. Write a test that runs two `RedisFixedWindow` instances (simulating two app servers) pointed at the same Redis, and confirms they share state correctly.
 
 **You're done when:** Two separate Python objects, both backed by the same Redis instance, correctly share the same counter.
 
-**Write in LEARNINGS.md:** What specifically would go wrong if you used `GET` then `SET` instead of `INCR` here?
+**Write in LEARNINGS.md:** What specifically would go wrong if you used `GET` then `SET` instead of `INCR` here? And separately — what would go wrong if two endpoints shared a Redis key because namespace was missing?
 
 ---
 
@@ -1177,9 +1193,11 @@ class RedisFixedWindow:
 
 **Tasks:**
 
-1. Create `src/algorithms/redis_sliding_window_counter.py`, applying the same pattern from Day 35: store `current` and `previous` window counts as separate Redis keys, with `INCR` + `EXPIRE`, and replicate the weighting math from Day 16 in Python (the math itself doesn't need to live in Redis — only the counters do).
+1. Create `src/algorithms/redis_sliding_window_counter.py`, applying the same pattern from Day 35: store `current` and `previous` window counts as separate Redis keys, with `INCR` + `EXPIRE`, and replicate the weighting math from Day 16 in Python (the math itself doesn't need to live in Redis — only the counters do). Include `namespace` in all Redis keys, exactly as Day 35 showed.
 2. Write tests mirroring Day 35's "two instances share state" test.
 3. Benchmark this Redis-backed version against its pure-Python counterpart from Day 16 — expect it to be SLOWER (network round-trip to Redis) but now correct across multiple instances. Record both numbers in `BENCHMARKS.md`.
+
+> **Note for Day 42:** the approach used here — pipeline GET for current/previous counts, then a separate conditional INCR — is a check-then-act pattern where two concurrent requests can both read the same count, both decide "allowed," and both INCR, over-admitting past the limit. Day 42 is where you find and fix this for every algorithm that has it, including this one. Keep the implementation as-is for now so you can discover the bug yourself under real concurrency.
 
 **You're done when:** Tests pass and you have a documented throughput comparison: pure Python vs Redis-backed.
 
@@ -1305,7 +1323,7 @@ redis.call("EXPIRE", KEYS[1], 3600)
 return allowed
 ```
 
-2. Load and call it from Python:
+2. Load and call it from Python — include `namespace` in the key exactly as you did on Day 35, so different endpoints using Token Bucket never share a bucket:
 
 ```python
 import redis, time
@@ -1313,14 +1331,17 @@ import redis, time
 r = redis.Redis(decode_responses=True)
 script = r.register_script(open("src/algorithms/redis_token_bucket.lua").read())
 
-def is_allowed(user_id, capacity=10, refill_rate=1):
-    result = script(keys=[f"token_bucket:{user_id}"], args=[capacity, refill_rate, time.time()])
+def is_allowed(user_id, namespace="default", capacity=10, refill_rate=1):
+    # namespace isolates this bucket from other endpoints using the same algorithm
+    key = f"token_bucket:{namespace}:{user_id}"
+    result = script(keys=[key], args=[capacity, refill_rate, time.time()])
     return bool(int(result))
 ```
 
-3. Write in `LEARNINGS.md`: Why does Redis guarantee a Lua script runs atomically (no other client's commands can interleave mid-script), and why does that matter for Token Bucket specifically?
+3. Apply the same `namespace` argument to the Leaky Bucket Lua wrapper you build on Day 41 — every Lua-scripted algorithm follows the same pattern.
+4. Write in `LEARNINGS.md`: Why does Redis guarantee a Lua script runs atomically (no other client's commands can interleave mid-script), and why does that matter for Token Bucket specifically?
 
-**You're done when:** Your Lua-scripted Token Bucket passes the same burst + refill test you wrote in pure Python on Day 17.
+**You're done when:** Your Lua-scripted Token Bucket passes the same burst + refill test you wrote in pure Python on Day 17, AND a test confirms two different namespaces for the same user maintain completely independent token counts.
 
 ---
 
@@ -1342,7 +1363,9 @@ def is_allowed(user_id, capacity=10, refill_rate=1):
 
 **Time:** 4–5 hrs
 
-**What you're doing:** Deliberately trying to BREAK your own rate limiter with concurrent requests, to prove atomicity actually holds — including finding a real bug this plan deliberately left in from Day 37.
+**What you're doing:** Deliberately trying to BREAK your own rate limiter with concurrent requests, to prove atomicity actually holds — including finding real bugs this plan deliberately left in.
+
+**Critical rule for this day:** When you find a race condition in one algorithm, your job is NOT just to fix that one algorithm. Your job is to grep every Redis-backed algorithm (all five, sync and async) for the same pattern — a Redis READ followed by a separate, non-pipelined Redis WRITE where the write's value depends on the read — and fix every instance you find. This exact class of bug has a history of being fixed in one place and missed in another; today is where you close it across the whole codebase, not just the one case the test found first.
 
 **Tasks:**
 
@@ -3316,5 +3339,3 @@ Use this every single day:
 7. **Ask Claude** — paste the full error message and the exact code that caused it.
 
 ---
-
-_Good luck. 140 days from now, you won't just have a project that holds up under hard technical questions — you'll have one that's actually been attacked, billed, broken, and taught to someone else. That's a different kind of done._
