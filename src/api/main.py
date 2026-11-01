@@ -13,6 +13,7 @@ from starlette.responses import HTMLResponse, Response
 from src.api.admin import get_admin_key_manager
 from src.api.admin import router as admin_router
 from src.api.compare import router as compare_router
+from src.middleware.priority_queue import PriorityRequestQueue
 from src.middleware.rate_limit_middleware import RateLimitMiddleware
 from src.monitoring.metrics import get_metrics_payload
 from src.monitoring.tracing import setup_tracing
@@ -88,11 +89,14 @@ def create_app(backend: str | None = None) -> FastAPI:
     key_manager = get_admin_key_manager()
 
     # Attach production rate limiting middleware
+    priority_queue = PriorityRequestQueue()
+    application.state.priority_queue = priority_queue
     application.add_middleware(
         RateLimitMiddleware,
         redis_client=redis_sync,
         async_redis_client=redis_async,
         key_manager=key_manager,
+        priority_queue=priority_queue,
     )
 
     @application.get("/")

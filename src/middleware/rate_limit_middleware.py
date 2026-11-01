@@ -9,7 +9,9 @@ Supports both synchronous and non-blocking asynchronous Redis algorithms,
 preventing event loop thread blocking under high concurrent loads.
 """
 
+import asyncio
 import inspect
+import os
 import time
 import uuid
 from collections.abc import Callable
@@ -40,6 +42,7 @@ from src.middleware.circuit_breaker import CircuitBreaker
 from src.middleware.config import API_KEYS, DEFAULT_ROUTE_RULES, EndpointRule
 from src.middleware.endpoint_trie import EndpointTrie
 from src.middleware.key_manager import APIKeyManager
+from src.middleware.priority_queue import PriorityRequestQueue
 from src.middleware.trusted_proxy import parse_trusted_proxies, resolve_client_ip
 from src.monitoring.logging_config import app_logger
 from src.monitoring.metrics import (
@@ -50,6 +53,13 @@ from src.monitoring.metrics import (
     REQUEST_LATENCY,
 )
 from src.monitoring.tracing import trace_rate_limiter_evaluation
+
+TIER_PRIORITY_MAP: dict[str, int] = {
+    "enterprise": PriorityRequestQueue.PRIORITY_ENTERPRISE,
+    "paid": PriorityRequestQueue.PRIORITY_PAID,
+    "free": PriorityRequestQueue.PRIORITY_FREE,
+    "anonymous": PriorityRequestQueue.PRIORITY_ANONYMOUS,
+}
 
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
@@ -63,6 +73,11 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         circuit_breaker: CircuitBreaker instance for fail-open resilience.
         redis_client: Optional sync Redis client for distributed state synchronization.
         async_redis_client: Optional async Redis client for non-blocking event loop execution.
+        priority_queue: PriorityRequestQueue instance for load shedding and tier prioritization.
+        saturation_threshold: Concurrent in-flight request threshold before queuing/shedding triggers.
+        max_queue_depth: Maximum requests held in the priority queue before dropping.
+        queue_timeout: Maximum seconds a prioritized request will wait in queue before timing out.
+        shed_free_tier: Whether free-tier requests are shed immediately under saturation.
     """
 
     def __init__(
@@ -76,12 +91,57 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         async_redis_client: Any | None = None,
         trusted_proxies: str | None = None,
         key_manager: APIKeyManager | None = None,
+        priority_queue: PriorityRequestQueue | None = None,
+        saturation_threshold: int | None = None,
+        max_queue_depth: int | None = None,
+        queue_timeout: float | None = None,
+        shed_free_tier: bool | None = None,
     ):
         super().__init__(app)
         self.redis_client = redis_client
         self.async_redis_client = async_redis_client
         self.trusted_proxies = parse_trusted_proxies(trusted_proxies)
         self.key_manager = key_manager
+
+        # Priority request queue and saturation configuration
+        self.priority_queue = priority_queue or PriorityRequestQueue()
+        self.saturation_threshold = (
+            saturation_threshold
+            if saturation_threshold is not None
+            else int(
+                os.getenv(
+                    "RATEFORTRESS_SATURATION_THRESHOLD",
+                    os.getenv("SATURATION_THRESHOLD", "100"),
+                )
+            )
+        )
+        self.max_queue_depth = (
+            max_queue_depth
+            if max_queue_depth is not None
+            else int(
+                os.getenv(
+                    "RATEFORTRESS_MAX_QUEUE_DEPTH",
+                    os.getenv("MAX_QUEUE_DEPTH", "100"),
+                )
+            )
+        )
+        self.queue_timeout = (
+            queue_timeout
+            if queue_timeout is not None
+            else float(
+                os.getenv(
+                    "RATEFORTRESS_QUEUE_TIMEOUT",
+                    os.getenv("QUEUE_TIMEOUT", "5.0"),
+                )
+            )
+        )
+        self.shed_free_tier = (
+            shed_free_tier
+            if shed_free_tier is not None
+            else os.getenv("RATEFORTRESS_SHED_FREE_TIER", "true").lower()
+            in ("1", "true", "yes")
+        )
+        self._active_requests = 0
 
         # Detect if redis_client passed is actually an async client
         if redis_client is not None and (
@@ -292,6 +352,55 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         except Exception:
             return 1
 
+    def _release_slot(self) -> None:
+        """Releases an active request slot and admits the highest-priority queued waiter."""
+        self._active_requests = max(0, self._active_requests - 1)
+        while not self.priority_queue.is_empty():
+            entry = self.priority_queue.pop()
+            if entry is None:
+                break
+            _, _, _, waiter = entry
+            if waiter is not None and not waiter.done():
+                self._active_requests += 1
+                waiter.set_result(True)
+                break
+
+    def _shed_response(
+        self,
+        request_id: str,
+        tier: str,
+        nominal_limit: int,
+        retry_after: int = 1,
+        detail: str = "System is saturated. Request shed.",
+    ) -> JSONResponse:
+        """Constructs an RFC-compliant HTTP 503 response for shed requests."""
+        headers = {
+            "X-RateLimit-Limit": str(nominal_limit),
+            "X-RateLimit-Remaining": "0",
+            "Retry-After": str(retry_after),
+            "X-RateLimit-Tier": tier,
+            "X-Request-ID": request_id,
+        }
+        app_logger.warning(
+            "Request shed due to system saturation",
+            extra={
+                "request_id": request_id,
+                "tier": tier,
+                "status_code": 503,
+                "detail": detail,
+                "retry_after": retry_after,
+            },
+        )
+        return JSONResponse(
+            status_code=503,
+            content={
+                "error": "service unavailable",
+                "detail": detail,
+                "retry_after": retry_after,
+            },
+            headers=headers,
+        )
+
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
         path = request.url.path
 
@@ -302,11 +411,84 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         request_id = request.headers.get("x-request-id") or str(uuid.uuid4())
         ACTIVE_REQUESTS.inc()
         start_time = time.perf_counter()
+        slot_acquired = False
         try:
             client_id, tier, multiplier = self._get_client_identity(request)
             limiter, nominal_limit, algorithm_name = self._get_limiter_for_route(
                 path, multiplier
             )
+
+            # Option B: Shedding-under-saturation
+            # shortcut: in-memory PriorityRequestQueue is single-process, upgrade to Redis Sorted Set (ZSET) if distributed priority queuing across multiple gateway instances is required.
+            if self._active_requests < self.saturation_threshold:
+                self._active_requests += 1
+                slot_acquired = True
+            else:
+                if self.shed_free_tier and tier in ("free", "anonymous"):
+                    elapsed = time.perf_counter() - start_time
+                    REQUEST_COUNT.labels(
+                        endpoint=path,
+                        status="shed",
+                        algorithm=algorithm_name,
+                        tier=tier,
+                    ).inc()
+                    REQUEST_LATENCY.labels(endpoint=path, status="shed").observe(elapsed)
+                    return self._shed_response(
+                        request_id=request_id,
+                        tier=tier,
+                        nominal_limit=nominal_limit,
+                        retry_after=1,
+                        detail="System is saturated. Free-tier request shed.",
+                    )
+
+                if len(self.priority_queue) >= self.max_queue_depth:
+                    elapsed = time.perf_counter() - start_time
+                    REQUEST_COUNT.labels(
+                        endpoint=path,
+                        status="shed",
+                        algorithm=algorithm_name,
+                        tier=tier,
+                    ).inc()
+                    REQUEST_LATENCY.labels(endpoint=path, status="shed").observe(elapsed)
+                    return self._shed_response(
+                        request_id=request_id,
+                        tier=tier,
+                        nominal_limit=nominal_limit,
+                        retry_after=1,
+                        detail="Priority queue capacity exceeded. Request shed.",
+                    )
+
+                loop = asyncio.get_running_loop()
+                waiter = loop.create_future()
+                priority = TIER_PRIORITY_MAP.get(
+                    tier, PriorityRequestQueue.PRIORITY_ANONYMOUS
+                )
+                self.priority_queue.push(priority, request_id, waiter)
+                try:
+                    await asyncio.wait_for(waiter, timeout=self.queue_timeout)
+                    slot_acquired = True
+                except (TimeoutError, asyncio.CancelledError):
+                    if (
+                        waiter.done()
+                        and not waiter.cancelled()
+                        and waiter.exception() is None
+                    ):
+                        self._release_slot()
+                    elapsed = time.perf_counter() - start_time
+                    REQUEST_COUNT.labels(
+                        endpoint=path,
+                        status="shed",
+                        algorithm=algorithm_name,
+                        tier=tier,
+                    ).inc()
+                    REQUEST_LATENCY.labels(endpoint=path, status="shed").observe(elapsed)
+                    return self._shed_response(
+                        request_id=request_id,
+                        tier=tier,
+                        nominal_limit=nominal_limit,
+                        retry_after=1,
+                        detail="Request timed out waiting in priority queue.",
+                    )
 
             # Wrap rate evaluation in distributed trace span and circuit breaker
             with trace_rate_limiter_evaluation(
@@ -429,4 +611,6 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
             return response
         finally:
+            if slot_acquired:
+                self._release_slot()
             ACTIVE_REQUESTS.dec()

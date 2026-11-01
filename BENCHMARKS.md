@@ -134,6 +134,21 @@ Without atomic Lua scripting, Redis rate limiters (such as Sliding Window Log an
 
 ---
 
+## ⚖️ Architectural Constraints & Tradeoffs: In-Memory Load-Shedding vs. Distributed Semaphores
+
+### In-Memory Priority Queue Multi-Worker Boundary
+While the in-memory min-heap priority queue provides microsecond-level scheduling overhead ($O(\log N)$ push/pop) without network round-trips, it operates strictly within single-process boundary space:
+1. **Multi-Worker Scaling Effect (`--workers N`):**
+   - Each Uvicorn worker process maintains an isolated instance of `PriorityRequestQueue` and an independent `_active_requests` counter.
+   - A configured saturation threshold of 100 requests per process with `--workers 2` yields an effective cluster-wide admission ceiling of **200 concurrent requests**.
+2. **Local vs. Global Scheduling Preemption:**
+   - Priority ordering is enforced strictly within each individual worker process. Under uneven load distribution across processes, a paid request held in the priority queue on Worker 1 cannot preempt an incoming free-tier request arriving at Worker 2 if Worker 2 is currently below its local saturation limit.
+3. **Production Path (Week 25 / Chaos-Adjacent Roadmap):**
+   - The architecturally complete resolution for distributed multi-worker topologies is a **Redis-backed distributed semaphore and priority queue** (leveraging Redis Sorted Sets `ZSET` or Redis Streams).
+   - Atomic Lua scripts track active concurrency leases globally, guaranteeing cluster-wide saturation thresholds and globally synchronized priority drainage across horizontal gateway instances.
+
+---
+
 ## 📈 Visual Benchmark Artifacts
 
 1. **Locust High-Concurrency Matrix (10 to 1,500 Users):**  

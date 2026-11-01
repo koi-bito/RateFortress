@@ -816,3 +816,19 @@ A structured record of architectural decisions, DSA insights, failure modes, and
   - Validated middleware integration: newly issued keys with 50x multipliers immediately take effect in `RateLimitMiddleware` (e.g. limit expands from 10 to 500).
   - Tested `RedisKeyStore` persistence lifecycle and dashboard UI endpoints.
 - **Milestone Reached:** 🎉 **Week 23 Complete! Multi-tenant admin API, persistent key store, seed automation, and interactive admin dashboard operational.** Test suite expanded to **180 automated tests passing with zero failures**.
+
+---
+
+## 🛡️ Week 24 — Tiered Load-Shedding & Priority Request Queue (Days 116–120)
+
+### Day 116 — Wiring PriorityRequestQueue for In-Flight Load Shedding
+- **Problem & Design Decision:**
+  - The codebase contained an in-memory `PriorityRequestQueue` (min-heap) that was orphaned. Under high concurrency, free and paid requests competed equally for ASGI worker capacity, causing degradation across all tiers.
+  - Selected **Option B (Shedding-under-saturation)** over Option A (Queue-before-dispatch). Option A forces every request through an async worker dispatch loop, introducing event-loop hops and head-of-line blocking even under healthy load. Option B preserves zero-latency pass-through when the gateway is healthy (`_active_requests < saturation_threshold`).
+  - Saturated load shedding: when active concurrent requests reach `RATEFORTRESS_SATURATION_THRESHOLD`, free/anonymous requests are shed fast with HTTP 503 (`Retry-After: 1`), reserving in-memory capacity for paid (`priority=1`) and enterprise (`priority=0`) requests to queue and drain in strict priority order.
+
+### Day 117 — Known Architectural Constraint: In-Memory Multi-Worker Queue Boundary
+- **The Constraint (Interview & Portfolio Defense):**
+  - `PriorityRequestQueue` and the `_active_requests` counter are stored in-process memory within each Uvicorn ASGI worker.
+  - *Multi-Process Impact:* Running Uvicorn with `--workers 2` (or horizontal container replicas) isolates state per process. A saturation threshold of $N=100$ effectively behaves as $2 \times N = 200$ across two workers, and priority ordering is not globally synchronized (a paid request queued on Worker 1 cannot preempt an incoming free request handled by Worker 2 if Worker 2 is below its local threshold).
+  - *Production Solution (Week 25 / Chaos-Adjacent Addition):* Transition from in-memory heaps to a **Redis-backed distributed semaphore and priority queue** (using Redis Sorted Sets `ZSET` or Redis Streams with consumer groups). This synchronizes concurrency leases globally via atomic Lua scripts and guarantees cluster-wide priority scheduling across all worker nodes.
