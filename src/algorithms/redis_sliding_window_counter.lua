@@ -1,6 +1,6 @@
 -- Atomic Sliding Window Counter Rate Limiter
--- KEYS[1] = current window key (e.g., "swc:{namespace}:{user_id}:{current_id}")
--- KEYS[2] = previous window key (e.g., "swc:{namespace}:{user_id}:{prev_id}")
+-- KEYS[1] = current window key (e.g., "swc:{namespace:user_id}:{current_id}")
+-- KEYS[2] = previous window key (e.g., "swc:{namespace:user_id}:{prev_id}")
 -- ARGV[1] = limit (maximum requests in window)
 -- ARGV[2] = window_seconds (window duration in seconds)
 -- ARGV[3] = weight_prev (weight of previous window, float between 0.0 and 1.0)

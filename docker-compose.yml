@@ -17,6 +17,8 @@ services:
       - USE_FAKE_REDIS=false
       - LOG_FORMAT=json
       - PROMETHEUS_MULTIPROC_DIR=/tmp/prometheus_multiproc
+      # REQUIRED: Set a strong, unique secret key for admin authentication in production
+      - ADMIN_SECRET_KEY=change_me_to_a_secure_random_key_in_production
     depends_on:
       redis:
         condition: service_healthy

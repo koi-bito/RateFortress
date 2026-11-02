@@ -7,6 +7,7 @@ monitoring tenant usage, and viewing global system metrics. All endpoints requir
 from __future__ import annotations
 
 import hmac
+import logging
 import os
 import time
 from typing import Any
@@ -17,6 +18,8 @@ from pydantic import BaseModel, Field
 from src.middleware.config import API_KEYS
 from src.middleware.key_manager import APIKeyManager, KeyMetadata, mask_key
 from src.storage.key_store import get_key_store
+
+logger = logging.getLogger("ratefortress.api.admin")
 
 router = APIRouter(prefix="/api/v1/admin", tags=["admin"])
 
@@ -47,7 +50,15 @@ def verify_admin_auth(
     authorization: str | None = Header(None, alias="Authorization"),
 ) -> str:
     """Enforces admin credential validation using constant-time comparison."""
-    expected_key = os.getenv("ADMIN_SECRET_KEY", DEFAULT_ADMIN_KEY)
+    expected_key = os.getenv("ADMIN_SECRET_KEY")
+    if not expected_key or expected_key == DEFAULT_ADMIN_KEY:
+        logger.error(
+            "Admin API disabled: ADMIN_SECRET_KEY is missing or set to the insecure default key."
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Admin API is misconfigured: ADMIN_SECRET_KEY must be set to a secure, non-default secret.",
+        )
 
     token = None
     if x_admin_key:

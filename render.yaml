@@ -30,6 +30,9 @@ services:
         value: json
       - key: PORT
         value: 8000
+      # REQUIRED: Set a strong, unique secret key for admin authentication in production
+      - key: ADMIN_SECRET_KEY
+        value: change_me_to_a_secure_random_key_in_production
 
   # 2. Managed Redis Distributed Storage Backend
   - type: redis

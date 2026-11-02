@@ -41,12 +41,11 @@ class RedisFixedWindow:
         current_window, _ = self._get_window_info(now)
         key = self._key(user_id, current_window)
 
-        # Atomic INCR
-        count = self.r.incr(key)
-        if count == 1:
-            # First request in this window: set TTL so old windows expire automatically
-            # We set TTL to window_seconds + 1 to avoid premature expiry within window
-            self.r.expire(key, self.window_seconds + 1)
+        # Atomic INCR + EXPIRE in pipeline
+        pipe = self.r.pipeline()
+        pipe.incr(key)
+        pipe.expire(key, self.window_seconds + 1)
+        count, _ = pipe.execute()
 
         return count <= self.limit
 

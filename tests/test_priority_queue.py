@@ -208,13 +208,16 @@ async def test_priority_ordering_under_saturation():
 
 @pytest.mark.asyncio
 async def test_saturation_queue_depth_exceeded():
-    """When PriorityRequestQueue reaches max_queue_depth, subsequent requests are shed with 503."""
+    """When PriorityRequestQueue reaches max_queue_depth, subsequent requests are shed with 503.
+
+    Once timed-out requests expire, new requests are accepted without being blocked by dead futures.
+    """
     app = FastAPI()
     app.add_middleware(
         RateLimitMiddleware,
         saturation_threshold=1,
         max_queue_depth=1,
-        queue_timeout=2.0,
+        queue_timeout=0.1,
     )
 
     hold_event = asyncio.Event()
@@ -245,10 +248,21 @@ async def test_saturation_queue_depth_exceeded():
         assert "queue capacity exceeded" in resp_paid2.json()["detail"]
         assert resp_paid2.headers["Retry-After"] == "1"
 
+        # Wait for 1st request to time out
+        resp_paid1 = await task_paid1
+        assert resp_paid1.status_code == 503
+        assert "timed out" in resp_paid1.json()["detail"]
+
+        # 3rd request arrives after 1st timed out -> should be accepted, not shed
+        task_paid3 = asyncio.create_task(
+            ac.get("/ping", headers={"X-API-Key": "key_paid_xyz"})
+        )
+        await asyncio.sleep(0.01)
+
         hold_event.set()
         await task_slow
-        resp1 = await task_paid1
-        assert resp1.status_code == 200
+        resp3 = await task_paid3
+        assert resp3.status_code == 200
 
 
 @pytest.mark.asyncio

@@ -7,7 +7,10 @@ constant outflow rate, prohibiting bursts from exceeding queue capacity.
 """
 
 import time
-from collections import defaultdict, deque
+from collections import deque
+from collections.abc import Callable
+
+from cachetools import LRUCache
 
 
 class LeakyBucket:
@@ -16,9 +19,17 @@ class LeakyBucket:
     Attributes:
         capacity: Maximum number of requests the bucket can hold concurrently.
         leak_rate_per_sec: Rate at which requests leak (process) out of the bucket per second.
+        max_clients: Maximum client entries retained in memory before LRU eviction.
+        now_fn: Callable returning current time in seconds (default: time.time).
     """
 
-    def __init__(self, capacity: int, leak_rate_per_sec: float):
+    def __init__(
+        self,
+        capacity: int,
+        leak_rate_per_sec: float,
+        max_clients: int = 100_000,
+        now_fn: Callable[[], float] | None = None,
+    ):
         if capacity <= 0:
             raise ValueError("Capacity must be a positive integer.")
         if leak_rate_per_sec <= 0:
@@ -26,16 +37,22 @@ class LeakyBucket:
 
         self.capacity = capacity
         self.leak_rate = float(leak_rate_per_sec)
-        self.queues = defaultdict(deque)
-        self.last_leak = defaultdict(time.time)
+        self.max_clients = max_clients
+        self._now_fn = now_fn
+        self.now_fn = now_fn or time.time
+        self.queues = LRUCache(maxsize=max_clients)
+        self.last_leak = LRUCache(maxsize=max_clients)
+
+    def _now(self) -> float:
+        return self._now_fn() if self._now_fn is not None else time.time()
 
     def _leak(self, user_id: str, now: float) -> None:
-        queue = self.queues[user_id]
+        queue = self.queues.get(user_id)
         if not queue:
             self.last_leak[user_id] = now
             return
 
-        elapsed = now - self.last_leak[user_id]
+        elapsed = now - self.last_leak.get(user_id, now)
         leaked = int(elapsed * self.leak_rate)
 
         if leaked > 0:
@@ -43,7 +60,7 @@ class LeakyBucket:
             for _ in range(num_to_remove):
                 queue.popleft()
             # Advance last_leak by the exact time slice consumed to preserve fractional remainder
-            self.last_leak[user_id] += leaked / self.leak_rate
+            self.last_leak[user_id] = self.last_leak.get(user_id, now) + leaked / self.leak_rate
 
     def is_allowed(self, user_id: str) -> bool:
         """Determines if a request by user_id fits into the bucket queue.
@@ -54,20 +71,22 @@ class LeakyBucket:
         Returns:
             True if request was queued/accepted, False if bucket overflowed.
         """
-        now = time.time()
+        now = self._now()
         self._leak(user_id, now)
 
-        queue = self.queues[user_id]
+        queue = self.queues.setdefault(user_id, deque())
         if len(queue) < self.capacity:
             queue.append(now)
+            self.queues[user_id] = queue
             return True
         return False
 
     def get_queue_size(self, user_id: str) -> int:
         """Returns the current number of requests in the bucket for user_id."""
-        now = time.time()
+        now = self._now()
         self._leak(user_id, now)
-        return len(self.queues[user_id])
+        queue = self.queues.get(user_id)
+        return len(queue) if queue else 0
 
     @property
     def limit(self) -> int:

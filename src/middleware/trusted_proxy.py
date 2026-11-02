@@ -13,13 +13,10 @@ import os
 
 logger = logging.getLogger("ratefortress.security")
 
-# Standard private network ranges and loopback defaults
+# Standard loopback defaults (operators must explicitly configure reverse proxies via TRUSTED_PROXIES)
 DEFAULT_TRUSTED_PROXIES: list[str] = [
     "127.0.0.1",
     "::1",
-    "10.0.0.0/8",
-    "172.16.0.0/12",
-    "192.168.0.0/16",
 ]
 
 

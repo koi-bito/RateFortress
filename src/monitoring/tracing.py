@@ -43,7 +43,8 @@ def setup_tracing(app: Any | None = None) -> TracerProvider:
         provider = TracerProvider(resource=resource)
 
         # Attach in-memory exporter for test verification
-        provider.add_span_processor(SimpleSpanProcessor(in_memory_span_exporter))
+        if os.getenv("TESTING"):
+            provider.add_span_processor(SimpleSpanProcessor(in_memory_span_exporter))
 
         # Attach console exporter if explicitly enabled
         if os.getenv("ENABLE_CONSOLE_TRACES", "").lower() in ("1", "true"):

@@ -7,7 +7,6 @@ and optional persistence via KeyStore (Redis/Memory).
 
 from __future__ import annotations
 
-import hmac
 import logging
 import secrets
 import time
@@ -125,6 +124,8 @@ class APIKeyManager:
         )
         self._keys[key] = meta
         self._persist(meta)
+        if self.key_store is not None:
+            self.key_store.publish_invalidation(key)
         return key
 
     def rotate_key(self, old_key: str, grace_period_sec: int = 3600) -> tuple[str, str]:
@@ -149,6 +150,8 @@ class APIKeyManager:
         old_meta.status = "rotating"
         old_meta.expires_at = now + grace_period_sec
         self._persist(old_meta)
+        if self.key_store is not None:
+            self.key_store.publish_invalidation(old_key)
 
         return new_key, old_key
 
@@ -172,6 +175,8 @@ class APIKeyManager:
             meta.description = description
 
         self._persist(meta)
+        if self.key_store is not None:
+            self.key_store.publish_invalidation(key)
         return meta
 
     def revoke_key(self, key: str) -> bool:
@@ -181,22 +186,28 @@ class APIKeyManager:
             meta.status = "revoked"
             meta.expires_at = time.time()
             self._persist(meta)
+            if self.key_store is not None:
+                self.key_store.publish_invalidation(key)
             return True
         return False
 
     def verify_key(self, candidate_key: str) -> KeyMetadata | None:
-        """Validates candidate_key using constant-time comparison to prevent timing attacks."""
+        """Validates candidate_key using O(1) dictionary lookup with store fallback."""
         if not candidate_key:
             return None
 
         now = time.time()
-        matched_meta: KeyMetadata | None = None
-
-        # Compare against known keys in constant time
-        for registered_key, meta in self._keys.items():
-            if hmac.compare_digest(registered_key, candidate_key):
-                matched_meta = meta
-                break
+        # Direct dictionary lookup in O(1). Timing-safe comparison is unnecessary
+        # here because the key's existence (or not) in the dict is determined without iteration.
+        matched_meta = self._keys.get(candidate_key)
+        if matched_meta is None and self.key_store is not None:
+            raw_meta = self.key_store.get(candidate_key)
+            if raw_meta is not None:
+                try:
+                    matched_meta = KeyMetadata.from_dict(raw_meta)
+                    self._keys[candidate_key] = matched_meta
+                except Exception as exc:
+                    logger.warning("Failed to parse key metadata from store: %s", exc)
 
         if not matched_meta:
             return None
@@ -210,6 +221,27 @@ class APIKeyManager:
             return None
 
         return matched_meta
+
+    def start_invalidation_listener(self) -> Any:
+        """Starts background listener for key invalidations via pub/sub."""
+        if self.key_store is not None:
+            return self.key_store.subscribe_invalidation(self.handle_invalidation)
+        return None
+
+    def handle_invalidation(self, message: str) -> None:
+        """Invalidates local cache entry or reloads all keys."""
+        if message == "__reload__":
+            if self.key_store is not None:
+                records = self.key_store.list_all()
+                self._keys.clear()
+                for record in records:
+                    try:
+                        meta = KeyMetadata.from_dict(record)
+                        self._keys[meta.key_id] = meta
+                    except Exception as exc:
+                        logger.warning("Failed to parse stored key record: %s", exc)
+        else:
+            self._keys.pop(message, None)
 
     def get_key_metadata(self, key: str) -> KeyMetadata | None:
         return self._keys.get(key)

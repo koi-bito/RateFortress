@@ -16,7 +16,7 @@ from pathlib import Path
 class JSONLogFormatter(logging.Formatter):
     """Custom logging formatter that serializes LogRecord instances to JSON strings."""
 
-    def __init__(self, mask_secrets: bool = False, *args, **kwargs):
+    def __init__(self, mask_secrets: bool = True, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.mask_secrets = mask_secrets
 

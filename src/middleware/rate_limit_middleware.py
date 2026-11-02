@@ -22,6 +22,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
 from src.algorithms.async_redis_fixed_window import AsyncRedisFixedWindow
+from src.algorithms.async_redis_gcra import AsyncRedisGCRA
 from src.algorithms.async_redis_leaky_bucket import AsyncRedisLeakyBucket
 from src.algorithms.async_redis_sliding_window_counter import (
     AsyncRedisSlidingWindowCounter,
@@ -29,8 +30,10 @@ from src.algorithms.async_redis_sliding_window_counter import (
 from src.algorithms.async_redis_sliding_window_log import AsyncRedisSlidingWindowLog
 from src.algorithms.async_redis_token_bucket import AsyncRedisTokenBucket
 from src.algorithms.fixed_window import FixedWindowCounter
+from src.algorithms.gcra import GCRA
 from src.algorithms.leaky_bucket import LeakyBucket
 from src.algorithms.redis_fixed_window import RedisFixedWindow
+from src.algorithms.redis_gcra import RedisGCRA
 from src.algorithms.redis_leaky_bucket import RedisLeakyBucket
 from src.algorithms.redis_sliding_window_counter import RedisSlidingWindowCounter
 from src.algorithms.redis_sliding_window_log import RedisSlidingWindowLog
@@ -142,6 +145,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             in ("1", "true", "yes")
         )
         self._active_requests = 0
+        self._active_waiters = 0
 
         # Detect if redis_client passed is actually an async client
         if redis_client is not None and (
@@ -254,6 +258,13 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                         leak_rate_per_sec=leak_rate,
                         namespace=namespace,
                     )
+                elif rule.algorithm in ("gcra", "cell_rate"):
+                    limiter = AsyncRedisGCRA(
+                        self.async_redis_client,
+                        limit=effective_limit,
+                        period=rule.window_seconds,
+                        namespace=namespace,
+                    )
                 else:  # default token_bucket
                     refill_rate = effective_limit / rule.window_seconds
                     limiter = AsyncRedisTokenBucket(
@@ -292,6 +303,13 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                         leak_rate_per_sec=leak_rate,
                         namespace=namespace,
                     )
+                elif rule.algorithm in ("gcra", "cell_rate"):
+                    limiter = RedisGCRA(
+                        self.redis_client,
+                        limit=effective_limit,
+                        period=rule.window_seconds,
+                        namespace=namespace,
+                    )
                 else:  # default token_bucket
                     refill_rate = effective_limit / rule.window_seconds
                     limiter = RedisTokenBucket(
@@ -317,6 +335,10 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                     leak_rate = effective_limit / rule.window_seconds
                     limiter = LeakyBucket(
                         capacity=effective_limit, leak_rate_per_sec=leak_rate
+                    )
+                elif rule.algorithm in ("gcra", "cell_rate"):
+                    limiter = GCRA(
+                        limit=effective_limit, period=rule.window_seconds
                     )
                 else:  # default token_bucket
                     refill_rate = effective_limit / rule.window_seconds
@@ -404,10 +426,6 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
         path = request.url.path
 
-        # Telemetry and administrative comparison endpoints bypass rate limiting
-        if path in ("/metrics", "/compare"):
-            return await call_next(request)
-
         request_id = request.headers.get("x-request-id") or str(uuid.uuid4())
         ACTIVE_REQUESTS.inc()
         start_time = time.perf_counter()
@@ -441,7 +459,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                         detail="System is saturated. Free-tier request shed.",
                     )
 
-                if len(self.priority_queue) >= self.max_queue_depth:
+                if self._active_waiters >= self.max_queue_depth:
                     elapsed = time.perf_counter() - start_time
                     REQUEST_COUNT.labels(
                         endpoint=path,
@@ -463,6 +481,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                 priority = TIER_PRIORITY_MAP.get(
                     tier, PriorityRequestQueue.PRIORITY_ANONYMOUS
                 )
+                self._active_waiters += 1
                 self.priority_queue.push(priority, request_id, waiter)
                 try:
                     await asyncio.wait_for(waiter, timeout=self.queue_timeout)
@@ -489,6 +508,8 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                         retry_after=1,
                         detail="Request timed out waiting in priority queue.",
                     )
+                finally:
+                    self._active_waiters -= 1
 
             # Wrap rate evaluation in distributed trace span and circuit breaker
             with trace_rate_limiter_evaluation(

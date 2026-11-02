@@ -52,6 +52,14 @@ def create_app(backend: str | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        # Startup: verify ADMIN_SECRET_KEY configuration
+        admin_key = os.getenv("ADMIN_SECRET_KEY")
+        if not admin_key or admin_key == "rf_admin_secret_master_key_2026":
+            logger.error(
+                "CRITICAL: ADMIN_SECRET_KEY is not set or using the default key. "
+                "Admin API routes will return 503 Service Unavailable."
+            )
+
         # Startup: verify ping if live Redis
         if redis_async is not None:
             is_fake = isinstance(redis_async, getattr(fake_aio, "FakeRedis", ()))
@@ -62,7 +70,20 @@ def create_app(backend: str | None = None) -> FastAPI:
                 except Exception as exc:
                     logger.error("Could not connect to async Redis in lifespan startup: %s", exc)
                     raise
+
+        # Startup: subscribe to key invalidations across workers
+        key_mgr = get_admin_key_manager()
+        invalidation_sub = key_mgr.start_invalidation_listener()
+
         yield
+
+        # Shutdown: stop key invalidation subscriber
+        if invalidation_sub is not None and hasattr(invalidation_sub, "stop"):
+            try:
+                invalidation_sub.stop()
+            except Exception as exc:
+                logger.debug("Error stopping invalidation subscriber: %s", exc)
+
         # Shutdown: close redis connections
         if redis_async is not None:
             try:
@@ -137,7 +158,7 @@ def create_app(backend: str | None = None) -> FastAPI:
     @application.get("/dashboard", response_class=HTMLResponse)
     def admin_dashboard():
         """Serves the RateFortress multi-tenant administrative dashboard UI."""
-        html_path = Path("templates/admin.html")
+        html_path = Path(__file__).resolve().parents[2] / "templates" / "admin.html"
         if html_path.exists():
             return HTMLResponse(content=html_path.read_text(encoding="utf-8"))
         return HTMLResponse(

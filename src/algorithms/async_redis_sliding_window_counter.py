@@ -46,9 +46,9 @@ class AsyncRedisSlidingWindowCounter:
 
     def _keys(self, user_id: str, now: float | None = None):
         curr_win, prev_win, weight_prev = self._get_window_info(now)
-        # Unified key prefix with sync Redis: swc:{namespace}:{user_id}:{window}
-        curr_key = f"swc:{self.namespace}:{user_id}:{curr_win}"
-        prev_key = f"swc:{self.namespace}:{user_id}:{prev_win}"
+        # Unified key prefix with sync Redis and hash tag for Redis Cluster: swc:{{namespace:user_id}}:{window}
+        curr_key = f"swc:{{{self.namespace}:{user_id}}}:{curr_win}"
+        prev_key = f"swc:{{{self.namespace}:{user_id}}}:{prev_win}"
         return curr_key, prev_key, weight_prev
 
     async def is_allowed(self, user_id: str) -> bool:

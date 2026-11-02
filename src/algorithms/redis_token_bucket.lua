@@ -36,7 +36,7 @@ elseif requested == 0 then
 end
 
 -- Persist atomic state
-redis.call("HMSET", key, "tokens", tokens, "last_refill", last_refill)
+redis.call("HSET", key, "tokens", tokens, "last_refill", last_refill)
 
 -- Set TTL: buffer time to refill from zero to capacity, with a 3600-second baseline
 local fill_time = math.ceil(capacity / refill_rate)

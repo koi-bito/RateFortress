@@ -1,3 +1,4 @@
+# DSA practice — not part of application
 """DSA Practice Day: Queues and Concurrency (Day 51).
 
 Implements core queue and synchronization data structures:

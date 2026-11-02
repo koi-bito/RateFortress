@@ -6,7 +6,9 @@ a true sliding window with O(1) memory and O(1) time complexity.
 """
 
 import time
-from collections import defaultdict
+from collections.abc import Callable
+
+from cachetools import LRUCache
 
 
 class SlidingWindowCounter:
@@ -15,9 +17,17 @@ class SlidingWindowCounter:
     Attributes:
         limit: Maximum number of allowed requests in the estimated window.
         window_seconds: Duration of each fixed window in seconds.
+        max_clients: Maximum client entries retained in memory before LRU eviction.
+        now_fn: Callable returning current time in seconds (default: time.time).
     """
 
-    def __init__(self, limit: int, window_seconds: int):
+    def __init__(
+        self,
+        limit: int,
+        window_seconds: int,
+        max_clients: int = 100_000,
+        now_fn: Callable[[], float] | None = None,
+    ):
         if limit <= 0:
             raise ValueError("Limit must be a positive integer.")
         if window_seconds <= 0:
@@ -25,15 +35,22 @@ class SlidingWindowCounter:
 
         self.limit = limit
         self.window_seconds = window_seconds
-        self.current_window = defaultdict(int)
-        self.previous_window = defaultdict(int)
-        self.window_id = defaultdict(int)
+        self.max_clients = max_clients
+        self._now_fn = now_fn
+        self.now_fn = now_fn or time.time
+        self.current_window = LRUCache(maxsize=max_clients)
+        self.previous_window = LRUCache(maxsize=max_clients)
+        self.window_id = LRUCache(maxsize=max_clients)
+
+    def _now(self) -> float:
+        return self._now_fn() if self._now_fn is not None else time.time()
 
     def _shift_window(self, user_id: str, current_id: int) -> None:
-        if self.window_id[user_id] != current_id:
-            windows_passed = current_id - self.window_id[user_id]
+        last_win_id = self.window_id.get(user_id, 0)
+        if last_win_id != current_id:
+            windows_passed = current_id - last_win_id
             if windows_passed == 1:
-                self.previous_window[user_id] = self.current_window[user_id]
+                self.previous_window[user_id] = self.current_window.get(user_id, 0)
             else:
                 self.previous_window[user_id] = 0
 
@@ -49,7 +66,7 @@ class SlidingWindowCounter:
         Returns:
             True if request is permitted, False if rate limit is exceeded.
         """
-        now = time.time()
+        now = self._now()
         current_id = int(now // self.window_seconds)
         elapsed_in_window = now % self.window_seconds
         weight_of_previous = 1.0 - (elapsed_in_window / self.window_seconds)
@@ -57,18 +74,18 @@ class SlidingWindowCounter:
         self._shift_window(user_id, current_id)
 
         estimated_count = (
-            self.previous_window[user_id] * weight_of_previous
-            + self.current_window[user_id]
+            self.previous_window.get(user_id, 0) * weight_of_previous
+            + self.current_window.get(user_id, 0)
         )
 
         if estimated_count < self.limit:
-            self.current_window[user_id] += 1
+            self.current_window[user_id] = self.current_window.get(user_id, 0) + 1
             return True
         return False
 
     def get_estimated_count(self, user_id: str) -> float:
         """Returns the current estimated request count for user_id."""
-        now = time.time()
+        now = self._now()
         current_id = int(now // self.window_seconds)
         elapsed_in_window = now % self.window_seconds
         weight_of_previous = 1.0 - (elapsed_in_window / self.window_seconds)
@@ -76,8 +93,8 @@ class SlidingWindowCounter:
         self._shift_window(user_id, current_id)
 
         return float(
-            self.previous_window[user_id] * weight_of_previous
-            + self.current_window[user_id]
+            self.previous_window.get(user_id, 0) * weight_of_previous
+            + self.current_window.get(user_id, 0)
         )
 
     def get_remaining(self, user_id: str) -> int:
@@ -89,7 +106,7 @@ class SlidingWindowCounter:
         """Returns seconds until current window expires and weight resets."""
         if self.get_remaining(user_id) > 0:
             return 0
-        now = time.time()
+        now = self._now()
         current_id = int(now // self.window_seconds)
         reset_time = (current_id + 1) * self.window_seconds
         return max(1, int(reset_time - now))

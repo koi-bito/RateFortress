@@ -42,8 +42,8 @@ class RedisSlidingWindowCounter:
         elapsed_in_window = now % self.window_seconds
         weight_of_previous = 1.0 - (elapsed_in_window / self.window_seconds)
 
-        current_key = f"swc:{self.namespace}:{user_id}:{current_id}"
-        prev_key = f"swc:{self.namespace}:{user_id}:{prev_id}"
+        current_key = f"swc:{{{self.namespace}:{user_id}}}:{current_id}"
+        prev_key = f"swc:{{{self.namespace}:{user_id}}}:{prev_id}"
         return current_key, prev_key, weight_of_previous, elapsed_in_window
 
     def is_allowed(self, user_id: str) -> bool:

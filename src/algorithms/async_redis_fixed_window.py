@@ -40,10 +40,11 @@ class AsyncRedisFixedWindow:
         current_window, _ = self._get_window_info(now)
         key = self._key(user_id, current_window)
 
-        # Atomic async INCR
-        count = await self.r.incr(key)
-        if count == 1:
-            await self.r.expire(key, self.window_seconds + 1)
+        # Atomic async INCR + EXPIRE in pipeline
+        pipe = self.r.pipeline()
+        pipe.incr(key)
+        pipe.expire(key, self.window_seconds + 1)
+        count, _ = await pipe.execute()
 
         return count <= self.limit
 

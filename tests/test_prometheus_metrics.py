@@ -61,15 +61,20 @@ def test_limiter_overhead_histogram_recorded():
     assert 'tier="paid"' in metrics_resp.text
 
 
-def test_metrics_endpoint_bypasses_rate_limiting():
-    """Telemetry endpoint /metrics must never be blocked by client rate limiting."""
+def test_metrics_endpoint_respects_rate_limiting():
+    """Telemetry endpoint /metrics respects its configured rate limit (60 req/min)."""
     app = create_app(backend="memory")
     client = TestClient(app)
 
-    # Hammer /metrics 150 times without an API key
-    for _ in range(150):
+    # 60 requests succeed within the limit
+    for _ in range(60):
         resp = client.get("/metrics")
         assert resp.status_code == 200
+
+    # 61st request exceeds the configured limit
+    resp = client.get("/metrics")
+    assert resp.status_code == 429
+    assert resp.headers["X-RateLimit-Limit"] == "60"
 
 
 def test_multiprocess_metrics_aggregation(tmp_path, monkeypatch):

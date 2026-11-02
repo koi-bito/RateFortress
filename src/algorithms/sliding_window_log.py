@@ -7,7 +7,10 @@ at the expense of higher memory footprint: O(N) per user where N is request coun
 """
 
 import time
-from collections import defaultdict, deque
+from collections import deque
+from collections.abc import Callable
+
+from cachetools import LRUCache
 
 
 class SlidingWindowLog:
@@ -16,9 +19,17 @@ class SlidingWindowLog:
     Attributes:
         limit: Maximum number of allowed requests within any rolling window.
         window_seconds: Rolling window duration in seconds.
+        max_clients: Maximum client entries retained in memory before LRU eviction.
+        now_fn: Callable returning current time in seconds (default: time.time).
     """
 
-    def __init__(self, limit: int, window_seconds: int):
+    def __init__(
+        self,
+        limit: int,
+        window_seconds: int,
+        max_clients: int = 100_000,
+        now_fn: Callable[[], float] | None = None,
+    ):
         if limit <= 0:
             raise ValueError("Limit must be a positive integer.")
         if window_seconds <= 0:
@@ -26,7 +37,13 @@ class SlidingWindowLog:
 
         self.limit = limit
         self.window_seconds = window_seconds
-        self.logs = defaultdict(deque)
+        self.max_clients = max_clients
+        self._now_fn = now_fn
+        self.now_fn = now_fn or time.time
+        self.logs = LRUCache(maxsize=max_clients)
+
+    def _now(self) -> float:
+        return self._now_fn() if self._now_fn is not None else time.time()
 
     def is_allowed(self, user_id: str) -> bool:
         """Determines if a request by user_id is permitted within the rolling window.
@@ -37,8 +54,8 @@ class SlidingWindowLog:
         Returns:
             True if request is permitted, False if rate limit is exceeded.
         """
-        now = time.time()
-        log = self.logs[user_id]
+        now = self._now()
+        log = self.logs.setdefault(user_id, deque())
         cutoff = now - self.window_seconds
 
         # Drop timestamps older than the rolling window from the front in O(1) per drop
@@ -47,13 +64,16 @@ class SlidingWindowLog:
 
         if len(log) < self.limit:
             log.append(now)
+            self.logs[user_id] = log
             return True
         return False
 
     def get_remaining(self, user_id: str) -> int:
         """Returns the number of remaining requests for user_id in the current rolling window."""
-        now = time.time()
-        log = self.logs[user_id]
+        now = self._now()
+        log = self.logs.get(user_id)
+        if not log:
+            return self.limit
         cutoff = now - self.window_seconds
 
         while log and log[0] <= cutoff:
@@ -66,8 +86,10 @@ class SlidingWindowLog:
 
         If the user has not made any requests, returns the current time.
         """
-        now = time.time()
-        log = self.logs[user_id]
+        now = self._now()
+        log = self.logs.get(user_id)
+        if not log:
+            return now
         cutoff = now - self.window_seconds
 
         while log and log[0] <= cutoff:
@@ -82,5 +104,5 @@ class SlidingWindowLog:
         """Returns the number of seconds until an existing request timestamp expires."""
         if self.get_remaining(user_id) > 0:
             return 0
-        now = time.time()
+        now = self._now()
         return max(1, int(self.get_reset_time(user_id) - now))

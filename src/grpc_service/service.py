@@ -6,6 +6,7 @@ binary Protocol Buffers / HTTP/2 transport instead of REST/JSON.
 
 from __future__ import annotations
 
+import inspect
 import logging
 from concurrent import futures
 from typing import Any
@@ -82,7 +83,11 @@ class RateLimiterService(ratefortress_pb2_grpc.RateLimiterServicer):
         limiter = self._get_limiter(limiter_key, algorithm, effective_limit, window_seconds=10)
 
         # Evaluate rate limiting
-        allowed = limiter.is_allowed(client_id, cost)
+        sig = inspect.signature(limiter.is_allowed)
+        if "cost" in sig.parameters or "tokens" in sig.parameters:
+            allowed = limiter.is_allowed(client_id, cost)
+        else:
+            allowed = limiter.is_allowed(client_id)
         remaining = limiter.get_remaining(client_id) if hasattr(limiter, "get_remaining") else 0
         retry_after = limiter.get_retry_after(client_id) if hasattr(limiter, "get_retry_after") else (0 if allowed else 1)
 

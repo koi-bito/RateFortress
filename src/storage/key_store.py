@@ -39,6 +39,13 @@ class KeyStore(ABC):
     def exists(self, key_id: str) -> bool:
         """Checks if a key exists in the store."""
 
+    def publish_invalidation(self, message: str) -> None:
+        """Publishes an invalidation event for multi-worker synchronization."""
+
+    def subscribe_invalidation(self, callback: Any) -> Any:
+        """Subscribes to invalidation events for multi-worker synchronization."""
+        return None
+
 
 class MemoryKeyStore(KeyStore):
     """Thread-safe in-memory key store for local development and unit tests."""
@@ -71,6 +78,7 @@ class RedisKeyStore(KeyStore):
 
     KEY_PREFIX = "rf:keys:meta:"
     SET_NAME = "rf:keys:active_index"
+    INVALIDATION_CHANNEL = "ratefortress:key_invalidation"
 
     def __init__(self, redis_client: Any):
         self.redis = redis_client
@@ -103,17 +111,48 @@ class RedisKeyStore(KeyStore):
         if not key_ids:
             return []
 
+        sorted_ids = [
+            kid.decode("utf-8") if isinstance(kid, bytes) else str(kid)
+            for kid in sorted(key_ids)
+        ]
+        formatted_keys = [self._format_key(kid) for kid in sorted_ids]
+        raw_values = self.redis.mget(*formatted_keys)
+
         results: list[dict[str, Any]] = []
-        for kid in sorted(key_ids):
-            # kid might be bytes if decode_responses=False
-            kid_str = kid.decode("utf-8") if isinstance(kid, bytes) else str(kid)
-            meta = self.get(kid_str)
-            if meta:
-                results.append(meta)
+        for raw in raw_values:
+            if not raw:
+                continue
+            try:
+                results.append(json.loads(raw))
+            except (json.JSONDecodeError, TypeError) as exc:
+                logger.warning("Failed to decode key metadata from mget: %s", exc)
         return results
 
     def exists(self, key_id: str) -> bool:
         return bool(self.redis.sismember(self.SET_NAME, key_id))
+
+    def publish_invalidation(self, message: str) -> None:
+        try:
+            self.redis.publish(self.INVALIDATION_CHANNEL, message)
+        except Exception as exc:
+            logger.warning("Failed to publish key invalidation message: %s", exc)
+
+    def subscribe_invalidation(self, callback: Any) -> Any:
+        try:
+            pubsub = self.redis.pubsub()
+
+            def _handler(msg: dict[str, Any]) -> None:
+                data = msg.get("data")
+                if isinstance(data, bytes):
+                    data = data.decode("utf-8")
+                if isinstance(data, str):
+                    callback(data)
+
+            pubsub.subscribe(**{self.INVALIDATION_CHANNEL: _handler})
+            return pubsub.run_in_thread(daemon=True)
+        except Exception as exc:
+            logger.warning("Failed to subscribe to key invalidations: %s", exc)
+            return None
 
 
 _global_key_store: KeyStore | None = None

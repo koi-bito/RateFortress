@@ -112,3 +112,22 @@ def test_internal_endpoints_explicitly_rate_limited():
     metrics_rule = DEFAULT_ROUTE_RULES["/metrics"]
     assert metrics_rule.limit == 60
     assert metrics_rule.window_seconds == 60
+
+
+def test_private_subnets_untrusted_by_default():
+    """Verifies that private subnets are untrusted by default, ignoring spoofed X-Forwarded-For."""
+    from src.middleware.trusted_proxy import resolve_client_ip
+
+    # Without explicit configuration, private IPs (10.x, 192.168.x, 172.16.x) are untrusted
+    resolved = resolve_client_ip(
+        peer_ip="10.0.0.1",
+        forwarded_for="203.0.113.195",
+    )
+    # Peer is untrusted, so forwarded_for is ignored and peer_ip is returned
+    assert resolved == "10.0.0.1"
+
+    resolved_192 = resolve_client_ip(
+        peer_ip="192.168.1.50",
+        forwarded_for="198.51.100.22",
+    )
+    assert resolved_192 == "192.168.1.50"

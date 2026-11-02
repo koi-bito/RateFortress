@@ -49,7 +49,7 @@ else
 end
 
 -- Persist atomic state
-redis.call("HMSET", key, "queue_size", queue_size, "last_leak", last_leak)
+redis.call("HSET", key, "queue_size", queue_size, "last_leak", last_leak)
 
 -- Set TTL to ensure old keys cleanly expire
 local drain_time = math.ceil(capacity / leak_rate)

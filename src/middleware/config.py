@@ -11,7 +11,6 @@ class EndpointRule:
     limit: int = 100
     window_seconds: int = 60
     algorithm: str = "token_bucket"
-    scope: str = "per_ip"  # "per_ip" or "per_user"
 
 
 # Registered API keys with tier definitions and rate limit multipliers

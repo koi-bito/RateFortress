@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import logging
 import time
-import unittest.mock
 from pathlib import Path
 from typing import Any
 
@@ -170,32 +169,36 @@ ALGORITHMS_REGISTRY: list[tuple[str, str, Any]] = [
     (
         "fixed_window",
         "Fixed Window Counter",
-        lambda l, w: FixedWindowCounter(limit=l, window_seconds=w),
+        lambda l, w, c=time.time: FixedWindowCounter(limit=l, window_seconds=w, now_fn=c),
     ),
     (
         "sliding_window_log",
         "Sliding Window Log",
-        lambda l, w: SlidingWindowLog(limit=l, window_seconds=w),
+        lambda l, w, c=time.time: SlidingWindowLog(limit=l, window_seconds=w, now_fn=c),
     ),
     (
         "sliding_window_counter",
         "Sliding Window Counter",
-        lambda l, w: SlidingWindowCounter(limit=l, window_seconds=w),
+        lambda l, w, c=time.time: SlidingWindowCounter(limit=l, window_seconds=w, now_fn=c),
     ),
     (
         "token_bucket",
         "Token Bucket",
-        lambda l, w: TokenBucket(capacity=l, refill_rate_per_sec=float(l) / float(w)),
+        lambda l, w, c=time.time: TokenBucket(
+            capacity=l, refill_rate_per_sec=float(l) / float(w), now_fn=c
+        ),
     ),
     (
         "leaky_bucket",
         "Leaky Bucket",
-        lambda l, w: LeakyBucket(capacity=l, leak_rate_per_sec=float(l) / float(w)),
+        lambda l, w, c=time.time: LeakyBucket(
+            capacity=l, leak_rate_per_sec=float(l) / float(w), now_fn=c
+        ),
     ),
     (
         "gcra",
         "GCRA (Cell Rate)",
-        lambda l, w: GCRA(limit=l, period=float(w)),
+        lambda l, w, c=time.time: GCRA(limit=l, period=float(w), now_fn=c),
     ),
 ]
 
@@ -306,26 +309,24 @@ def run_comparison_simulation(
         bursty_allowed = 0
         steady_allowed = 0
 
-        # Run under isolated virtual time context
-        with unittest.mock.patch("time.time", side_effect=clock):
-            limiter = factory(effective_limit, window_seconds)
+        limiter = factory(effective_limit, window_seconds, clock)
 
-            for user_id, t_offset, is_bursty in traffic:
-                clock.current_time = base_time + t_offset
-                t0 = time.perf_counter()
-                is_permitted = limiter.is_allowed(user_id)
-                t1 = time.perf_counter()
+        for user_id, t_offset, is_bursty in traffic:
+            clock.current_time = base_time + t_offset
+            t0 = time.perf_counter()
+            is_permitted = limiter.is_allowed(user_id)
+            t1 = time.perf_counter()
 
-                latencies_ms.append((t1 - t0) * 1000.0)
+            latencies_ms.append((t1 - t0) * 1000.0)
 
-                if is_permitted:
-                    allowed_count += 1
-                    if is_bursty:
-                        bursty_allowed += 1
-                    else:
-                        steady_allowed += 1
+            if is_permitted:
+                allowed_count += 1
+                if is_bursty:
+                    bursty_allowed += 1
                 else:
-                    blocked_count += 1
+                    steady_allowed += 1
+            else:
+                blocked_count += 1
 
         allowed_pct = (
             round((allowed_count / total_requests) * 100.0, 2)

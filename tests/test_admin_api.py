@@ -1,5 +1,7 @@
 """Unit and Integration Tests for Week 23 Admin API, Dashboard, and Key Store."""
 
+import os
+
 import fakeredis
 from fastapi.testclient import TestClient
 
@@ -12,9 +14,12 @@ from src.middleware.config import API_KEYS
 from src.middleware.key_manager import APIKeyManager
 from src.storage.key_store import MemoryKeyStore, RedisKeyStore, reset_key_store
 
+TEST_ADMIN_KEY = "rf_custom_test_admin_secret_key_2026"
+
 
 def setup_fresh_app():
     """Sets up a clean test application with an in-memory key manager."""
+    os.environ["ADMIN_SECRET_KEY"] = TEST_ADMIN_KEY
     reset_key_store()
     mem_store = MemoryKeyStore()
     manager = APIKeyManager(initial_keys=API_KEYS, key_store=mem_store)
@@ -49,7 +54,7 @@ def test_admin_auth_rejection_and_success():
     # Valid X-Admin-Key header
     res_valid = client.get(
         "/api/v1/admin/keys",
-        headers={"X-Admin-Key": DEFAULT_ADMIN_KEY},
+        headers={"X-Admin-Key": TEST_ADMIN_KEY},
     )
     assert res_valid.status_code == 200
     assert "keys" in res_valid.json()
@@ -57,15 +62,37 @@ def test_admin_auth_rejection_and_success():
     # Valid Bearer token
     res_bearer = client.get(
         "/api/v1/admin/keys",
-        headers={"Authorization": f"Bearer {DEFAULT_ADMIN_KEY}"},
+        headers={"Authorization": f"Bearer {TEST_ADMIN_KEY}"},
     )
     assert res_bearer.status_code == 200
+
+
+def test_admin_misconfiguration_returns_503(monkeypatch):
+    """Verifies that missing or default ADMIN_SECRET_KEY disables admin routes with HTTP 503."""
+    client, _ = setup_fresh_app()
+
+    # Default secret key configured
+    monkeypatch.setenv("ADMIN_SECRET_KEY", DEFAULT_ADMIN_KEY)
+    res_default = client.get(
+        "/api/v1/admin/keys",
+        headers={"X-Admin-Key": DEFAULT_ADMIN_KEY},
+    )
+    assert res_default.status_code == 503
+    assert "misconfigured" in res_default.json()["detail"].lower()
+
+    # Unset secret key
+    monkeypatch.delenv("ADMIN_SECRET_KEY", raising=False)
+    res_unset = client.get(
+        "/api/v1/admin/keys",
+        headers={"X-Admin-Key": "some_key"},
+    )
+    assert res_unset.status_code == 503
 
 
 def test_admin_key_crud_lifecycle():
     """Tests the full lifecycle: issue -> get -> patch -> rotate -> revoke -> summary."""
     client, _ = setup_fresh_app()
-    admin_headers = {"X-Admin-Key": DEFAULT_ADMIN_KEY}
+    admin_headers = {"X-Admin-Key": TEST_ADMIN_KEY}
 
     # 1. Issue new key
     issue_payload = {
@@ -134,7 +161,7 @@ def test_admin_key_crud_lifecycle():
 def test_middleware_rate_limit_integration_with_new_key():
     """Confirms that newly issued keys immediately take effect in rate limit middleware."""
     client, _ = setup_fresh_app()
-    admin_headers = {"X-Admin-Key": DEFAULT_ADMIN_KEY}
+    admin_headers = {"X-Admin-Key": TEST_ADMIN_KEY}
 
     # Issue a high-tier enterprise key (50x multiplier)
     issue_res = client.post(
@@ -201,3 +228,29 @@ def test_dashboard_ui_endpoints():
     res_dashboard = client.get("/dashboard")
     assert res_dashboard.status_code == 200
     assert "Multi-Tenant Admin Dashboard" in res_dashboard.text
+
+
+def test_multi_worker_key_cache_and_invalidation():
+    """Verifies Fix 9: store fallback on cache miss and Pub/Sub invalidation."""
+    fake_r = fakeredis.FakeRedis(decode_responses=True)
+    shared_store = RedisKeyStore(fake_r)
+
+    # Worker 1 creates a key
+    mgr1 = APIKeyManager(key_store=shared_store)
+    new_key = mgr1.issue_key(tier="enterprise", limit_multiplier=5)
+
+    # Worker 2 has separate in-memory dictionary
+    mgr2 = APIKeyManager(key_store=shared_store)
+    # Clear mgr2's in-memory dictionary to simulate missing key
+    mgr2._keys.clear()
+
+    # Worker 2 verifies key -> falls back to store and populates local cache
+    assert new_key not in mgr2._keys
+    meta = mgr2.verify_key(new_key)
+    assert meta is not None
+    assert meta.tier == "enterprise"
+    assert new_key in mgr2._keys
+
+    # Invalidation event removes key from in-memory cache
+    mgr2.handle_invalidation(new_key)
+    assert new_key not in mgr2._keys

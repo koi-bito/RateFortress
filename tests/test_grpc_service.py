@@ -114,3 +114,29 @@ def test_grpc_get_quota(grpc_server_and_stub):
     assert resp.limit == 10
     assert resp.remaining == 10
 
+
+@pytest.mark.parametrize(
+    "algo",
+    [
+        "fixed_window",
+        "sliding_window_log",
+        "sliding_window_counter",
+        "token_bucket",
+        "leaky_bucket",
+        "gcra",
+    ],
+)
+def test_grpc_all_algorithms_supported(grpc_server_and_stub, algo):
+    """Validates that CheckRateLimit executes successfully across all 6 algorithms."""
+    stub = grpc_server_and_stub
+    req = ratefortress_pb2.RateLimitRequest(
+        client_id=f"user_{algo}",
+        endpoint="/api/test",
+        tier="free",
+        algorithm=algo,
+        cost=1,
+    )
+    resp = stub.CheckRateLimit(req)
+    assert resp.allowed is True
+    assert resp.limit == 10
+

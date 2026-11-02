@@ -39,7 +39,7 @@ def test_structured_json_logging_format():
     assert parsed["service"] == "ratefortress"
     assert parsed["level"] == "WARNING"
     assert parsed["request_id"] == "req-12345"
-    assert parsed["client_id"] == "key_paid_xyz"
+    assert parsed["client_id"] == "key_...xyz"
     assert parsed["tier"] == "paid"
     assert parsed["algorithm"] == "token_bucket"
     assert parsed["status_code"] == 429
