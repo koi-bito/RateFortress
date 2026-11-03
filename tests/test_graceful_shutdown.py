@@ -89,3 +89,4 @@ async def test_middleware_drain_in_flight():
         drained = await middleware.drain_in_flight(timeout=1.0)
         assert drained is True
         assert middleware._active_requests == 0
+

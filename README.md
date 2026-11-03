@@ -22,7 +22,9 @@
 - **6 Core Algorithms Built From Scratch:** Implements Fixed Window Counter, Sliding Window Log, Sliding Window Counter, Token Bucket, Leaky Bucket, and GCRA (Generic Cell Rate Algorithm) in pure Python and Redis Lua.
 - **Dual Transport (REST & gRPC):** Exposes rate limiting both as FastAPI ASGI middleware and as a high-throughput binary gRPC microservice (`proto/ratefortress.proto`).
 - **Atomic Concurrency (Zero Race Conditions):** Consolidated bounds checking, counter increments, and timestamp trimming into atomic Lua scripts (`EVALSHA`) in Redis, eliminating check-and-set concurrency leaks (verified under 50-thread concurrent stress).
-- **FastAPI Middleware Layer:** Pluggable ASGI middleware supporting hierarchical route rules via an `EndpointTrie`, tier multipliers (Free 1x, Paid 10x, Enterprise 50x), and RFC-compliant rate limit headers (`X-RateLimit-Limit`, `Remaining`, `Reset`, `Retry-After`).
+- **FastAPI Middleware Layer:** Pluggable ASGI middleware supporting hierarchical route rules via an `EndpointTrie`, multi-dimensional compound rate limiting (`key:route:ip`), trusted proxy CIDR anti-spoofing, tier multipliers (Free 1x, Paid 10x, Enterprise 50x), and RFC-compliant rate limit headers (`X-RateLimit-Limit`, `Remaining`, `Reset`, `Retry-After`).
+- **Load Shedding & Priority Queuing:** Priority request queue (min-heap) under high concurrency that sheds free/anonymous traffic fast with HTTP 503 (`Retry-After: 1`), protecting ASGI event loop capacity for paid and enterprise traffic.
+- **Production Hardening & Cold-Start Resilience:** Separates liveness (`/health`) from dependency-verified readiness (`/health/ready`). Traps `SIGTERM` / `SIGINT` signals, immediately rejecting new incoming traffic with HTTP 503 while draining in-flight requests cleanly within a bounded grace period (15s orchestrator SLA).
 - **Multi-Tenant Admin Dashboard & API (`/admin` & `/api/v1/admin/*`):** Full-featured administrative control plane for issuing, updating, and revoking API keys, initiating zero-downtime key rotation with dual-validity grace periods, persistent storage across Redis hashes, and an interactive live rate-limit test console.
 - **Circuit Breaker Fail-Open Resilience:** Protects downstream APIs from Redis outages. Automatically trips open after consecutive timeouts, failing open to preserve service availability.
 - **Algorithm Comparison Engine (`/compare`):** An interactive endpoint (JSON & responsive Jinja2 HTML) evaluating synthetic traffic across all algorithms simultaneously with microsecond latency instrumentation and empirical fairness analysis (Uniform vs. Skewed).
@@ -61,7 +63,7 @@ ratefortress/
 │   └── storage/        # Redis connection pools, Lua scripts (atomic EVALSHA)
 ├── proto/              # Protocol Buffers definitions (ratefortress.proto)
 ├── templates/          # Jinja2 comparison dashboard & Admin UI (templates/admin.html)
-├── tests/              # 180 automated tests (unit, concurrency, property, integration)
+├── tests/              # 211 automated tests (unit, concurrency, property, integration)
 ├── benchmarks/         # Micro-benchmarking harness & boundary burst reproducers
 ├── loadtests/          # Locust & k6 distributed load, spike & soak testing scripts
 ├── monitoring/         # Grafana dashboard provisioning, alert rules, Promtail & Prometheus configs
@@ -87,7 +89,7 @@ ratefortress/
 ├── docker-compose.yml  # Full-stack local orchestration (App + Redis + Prometheus + Grafana + Loki + Promtail)
 ├── Dockerfile          # Hardened Python 3.13-slim image with healthchecks
 ├── requirements.txt    # Project dependencies
-├── LEARNINGS.md        # Comprehensive 115-day daily engineering log
+├── LEARNINGS.md        # Comprehensive 143-day daily engineering log
 ├── BENCHMARKS.md       # Comparative performance & stress test data
 └── building_plan.md    # 29-week engineering roadmap
 ```
@@ -96,8 +98,8 @@ ratefortress/
 
 ## 🚦 Status & Milestones
 
-- **Current Status:** **Week 23 — Multi-Tenant Admin Dashboard & System Design Mastery Complete (Days 106–115 Complete!)** 🎉
-- **Next Milestone:** Week 24 — Real Stripe Metered Billing & Usage Overage (Days 116–120)
+- **Current Status:** **Production-Grade Gateway, Hardening & Capstone Complete (Days 1–143)** 🎉
+- **Test Suite Status:** **211 Automated Tests Passing (Zero Failures)**
 
 ---
 
@@ -129,7 +131,7 @@ source ratefortress_env/bin/activate  # Windows: ratefortress_env\Scripts\activa
 pip install -r requirements.txt
 ```
 
-### 3. Run Automated Test Suite (140 Tests)
+### 3. Run Automated Test Suite (211 Tests)
 
 ```bash
 pytest -v

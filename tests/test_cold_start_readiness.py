@@ -100,3 +100,4 @@ def test_cold_start_circuit_breaker_isolation():
     assert fresh_breaker.state == CircuitBreaker.STATE_CLOSED
     assert fresh_breaker.failures == 0
     assert fresh_breaker.opened_at is None
+
