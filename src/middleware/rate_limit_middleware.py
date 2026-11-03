@@ -162,6 +162,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         )
         self._active_requests = 0
         self._active_waiters = 0
+        self.is_shutting_down = False
 
         # Day 141 Compound Key: Global per-IP rate limiting configuration
         self.global_ip_limit = (
@@ -545,8 +546,37 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             headers=headers,
         )
 
+    async def drain_in_flight(self, timeout: float = 10.0, poll_interval: float = 0.05) -> bool:
+        """Waits for active in-flight requests to complete up to timeout."""
+        deadline = time.time() + timeout
+        while self._active_requests > 0:
+            if time.time() >= deadline:
+                return False
+            await asyncio.sleep(poll_interval)
+        return True
+
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
         path = request.url.path
+
+        app_ref = getattr(request, "app", None)
+        if app_ref is not None and hasattr(app_ref, "state") and not hasattr(app_ref.state, "rate_limit_middleware"):
+            app_ref.state.rate_limit_middleware = self
+
+        # Day 143: Reject new traffic during graceful shutdown while allowing in-flight requests to drain
+        is_shutting_down = self.is_shutting_down or (
+            app_ref is not None and getattr(getattr(app_ref, "state", None), "is_shutting_down", False)
+        )
+        if is_shutting_down and path not in ("/health", "/health/ready"):
+            req_id = request.headers.get("x-request-id") or str(uuid.uuid4())
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "error": "service unavailable",
+                    "detail": "Server is shutting down. In-flight requests draining.",
+                    "retry_after": 5,
+                },
+                headers={"Retry-After": "5", "X-Request-ID": req_id},
+            )
 
         request_id = request.headers.get("x-request-id") or str(uuid.uuid4())
         ACTIVE_REQUESTS.inc()

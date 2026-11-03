@@ -1,14 +1,16 @@
 """RateFortress FastAPI Application Gateway."""
 
+import asyncio
 import logging
 import os
+import signal
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 import fakeredis.aioredis as fake_aio
 import redis.asyncio as aioredis
 from fastapi import FastAPI
-from starlette.responses import HTMLResponse, Response
+from starlette.responses import HTMLResponse, JSONResponse, Response
 
 from src.api.admin import get_admin_key_manager
 from src.api.admin import router as admin_router
@@ -79,7 +81,33 @@ def create_app(
         key_mgr = get_admin_key_manager()
         invalidation_sub = key_mgr.start_invalidation_listener()
 
+        # Startup: register signal handlers for graceful shutdown (Day 143)
+        def _handle_shutdown_signal(sig, frame):
+            logger.info("Termination signal %s received. Initiating graceful shutdown...", sig)
+            app.state.is_shutting_down = True
+            middleware = getattr(app.state, "rate_limit_middleware", None)
+            if middleware:
+                middleware.is_shutting_down = True
+
+        for sig in (getattr(signal, "SIGTERM", None), getattr(signal, "SIGINT", None)):
+            if sig is not None:
+                try:
+                    signal.signal(sig, _handle_shutdown_signal)
+                except (ValueError, AttributeError, OSError):
+                    pass
+
         yield
+
+        # Shutdown: mark shutting down and drain in-flight requests (Day 143)
+        app.state.is_shutting_down = True
+        middleware = getattr(app.state, "rate_limit_middleware", None)
+        if middleware:
+            middleware.is_shutting_down = True
+            try:
+                grace_period = float(os.getenv("RATEFORTRESS_SHUTDOWN_GRACE_PERIOD", "5.0"))
+                await middleware.drain_in_flight(timeout=grace_period)
+            except Exception as exc:
+                logger.debug("Error during graceful shutdown drain: %s", exc)
 
         # Shutdown: stop key invalidation subscriber
         if invalidation_sub is not None and hasattr(invalidation_sub, "stop"):
@@ -106,6 +134,7 @@ def create_app(
         description="High-performance distributed rate limiter engine and API gateway.",
         lifespan=lifespan,
     )
+    application.state.is_shutting_down = False
 
     # Initialize OpenTelemetry distributed tracing
     setup_tracing(application)
@@ -133,14 +162,68 @@ def create_app(
 
     @application.get("/health")
     def health():
-        """Health check endpoint."""
+        """Liveness check endpoint."""
         return {"status": "healthy"}
+
+    @application.get("/health/ready")
+    async def readiness():
+        """Day 142 Readiness check: verifies backend connectivity and service availability."""
+        if getattr(application.state, "is_shutting_down", False):
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "status": "not_ready",
+                    "reason": "shutting_down",
+                    "detail": "Instance is in the process of shutting down.",
+                },
+            )
+
+        if active_backend == "memory":
+            return {"status": "ready", "backend": "memory"}
+
+        if active_backend == "redis_async":
+            if redis_async is None:
+                return JSONResponse(
+                    status_code=503,
+                    content={"status": "not_ready", "backend": "redis_async", "error": "Redis client uninitialized"},
+                )
+            try:
+                await redis_async.ping()
+                return {"status": "ready", "backend": "redis_async"}
+            except Exception as exc:
+                return JSONResponse(
+                    status_code=503,
+                    content={"status": "not_ready", "backend": "redis_async", "error": str(exc)},
+                )
+
+        if active_backend == "redis_sync":
+            if redis_sync is None:
+                return JSONResponse(
+                    status_code=503,
+                    content={"status": "not_ready", "backend": "redis_sync", "error": "Redis client uninitialized"},
+                )
+            try:
+                redis_sync.ping()
+                return {"status": "ready", "backend": "redis_sync"}
+            except Exception as exc:
+                return JSONResponse(
+                    status_code=503,
+                    content={"status": "not_ready", "backend": "redis_sync", "error": str(exc)},
+                )
+
+        return {"status": "ready", "backend": active_backend}
 
     @application.get("/metrics")
     def metrics():
         """Prometheus scrape endpoint exposing gateway telemetry."""
         payload, content_type = get_metrics_payload()
         return Response(content=payload, media_type=content_type)
+
+    @application.get("/api/slow-request")
+    async def slow_request(delay: float = 0.5):
+        """Day 143 Test endpoint: artificial delay to verify in-flight request completion during shutdown."""
+        await asyncio.sleep(delay)
+        return {"status": "completed", "delayed_seconds": delay}
 
     @application.get("/api/test")
     def test_endpoint():

@@ -39,6 +39,26 @@ If operating a Blue-Green deployment with a traffic router:
    ```
 2. The router atomically updates the active environment pointer in $< 1\text{ ms}$, terminating bad traffic immediately.
 
+#### Orchestrator Termination Grace Period & Drain Policy (Day 79 & Day 143 Integration)
+During cutover or instance retirement, orchestrators must allow active requests to finish before killing containers:
+- **Measured In-Flight SLA:** $p99 < 2.0\text{ ms}$ for rate evaluation, up to $3.0\text{ s}$ for long-polling / slow endpoints.
+- **Configured Shutdown Grace Period:** **10.0 seconds** (plus 5s safety margin = **15 seconds** orchestrator kill grace).
+- **Kubernetes Pod Spec:**
+  ```yaml
+  spec:
+    terminationGracePeriodSeconds: 15
+  ```
+- **Docker Compose Spec:**
+  ```yaml
+  stop_grace_period: 15s
+  ```
+- **Lifecycle Sequence:**
+  1. Traffic router flips live ingress to the Green candidate.
+  2. Orchestrator sends `SIGTERM` to the old Blue container.
+  3. Blue immediately marks `/health/ready` as `503 Service Unavailable`, rejecting any straggler connections with `Retry-After: 5`.
+  4. Blue middleware invokes `drain_in_flight(timeout=10.0)`, allowing executing requests to finish cleanly (0 dropped requests).
+  5. Container exits with code 0 once `_active_requests == 0`. Orchestrator only issues `SIGKILL` if in-flight requests exceed 15s.
+
 ---
 
 #### Procedure C: Docker Compose Rollback (EC2 / Bare Metal)

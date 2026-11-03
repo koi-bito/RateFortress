@@ -832,3 +832,38 @@ A structured record of architectural decisions, DSA insights, failure modes, and
   - `PriorityRequestQueue` and the `_active_requests` counter are stored in-process memory within each Uvicorn ASGI worker.
   - *Multi-Process Impact:* Running Uvicorn with `--workers 2` (or horizontal container replicas) isolates state per process. A saturation threshold of $N=100$ effectively behaves as $2 \times N = 200$ across two workers, and priority ordering is not globally synchronized (a paid request queued on Worker 1 cannot preempt an incoming free request handled by Worker 2 if Worker 2 is below its local threshold).
   - *Production Solution (Week 25 / Chaos-Adjacent Addition):* Transition from in-memory heaps to a **Redis-backed distributed semaphore and priority queue** (using Redis Sorted Sets `ZSET` or Redis Streams with consumer groups). This synchronizes concurrency leases globally via atomic Lua scripts and guarantees cluster-wide priority scheduling across all worker nodes.
+
+---
+
+## 🚀 Production Hardening Capstone (Days 141–143)
+
+### Day 141 — Rate Limit by Compound Key (`src/middleware/rate_limit_middleware.py`)
+- **Multi-Dimensional Enforcement:**
+  - Single-dimension limiting creates blind spots: limiting only by IP penalizes multiple users behind corporate NAT proxies, while limiting only by API key allows an attacker with a stolen or free key to flood gateway sockets and bandwidth from one origin.
+  - RateFortress evaluates compound keys combining tenant identity, route namespace, and network IP (`format_compound_key`), simultaneously enforcing route/key quotas and a global per-IP ceiling.
+- **Why a Real API Demands BOTH Limits Simultaneously:**
+  - *Tenant Fairness vs. Network Protection:* A paid tenant may have a generous quota (e.g. 5,000 req/min), but if all 5,000 requests are fired in a single 100ms burst from one IP, they saturate the network socket buffers and event loop of a single gateway worker. The per-IP limit caps the burst rate from that network location, while the per-key limit meters total volume across all legitimate client locations.
+  - *Compound Resolution:* The middleware dynamically evaluates both limiters and enforces the stricter bound, setting `X-RateLimit-Scope: ip` or `X-RateLimit-Scope: key` and updating standard headers accordingly.
+- **Tests Added:** `tests/test_compound_rate_limiting.py` (4 tests verifying shared-IP isolation, multi-key fairness, and header accuracy).
+
+### Day 142 — Warm-Up & Cold-Start Behavior (`src/api/main.py`)
+- **Memory Continuity vs. Distributed Persistence:**
+  - On restart, external Redis retains rate-limit quotas and sliding logs, but in-process state (circuit breaker error counters, open/closed flags, in-memory caches) resets completely.
+  - Cold instances start with a clean closed circuit breaker. If Redis was failing prior to restart, an optimistic startup would route production traffic to the new instance, causing immediate user-facing timeouts before the circuit breaker re-trips.
+- **Why a Readiness Check Can NEVER Return the Same as a Liveness Check:**
+  - *Liveness (`/health`):* Answers "Is the process event loop running?" If liveness fails, orchestrators send `SIGKILL` and restart the container. If liveness probed external Redis, a 2-second Redis network blip would trigger an immediate restart of all application gateway containers simultaneously, creating a catastrophic `CrashLoopBackOff` storm.
+  - *Readiness (`/health/ready`):* Answers "Can this instance safely serve user traffic right now?" If Redis is unreachable on cold start, `/health/ready` returns HTTP 503. The orchestrator removes the pod from the load balancer target group while keeping the container alive to retry connection establishment. Once Redis responds to `ping()`, readiness returns HTTP 200 and traffic resumes instantly.
+- **Tests Added:** `tests/test_cold_start_readiness.py` (6 tests verifying liveness isolation, readiness Redis probes, 503 on failure, and clean circuit breaker restarts).
+
+### Day 143 — Graceful Shutdown Handling (`src/middleware/rate_limit_middleware.py` & `src/api/main.py`)
+- **In-Flight Request Drain Mechanics:**
+  - When Docker/Kubernetes deploys a new release or scales down, it sends `SIGTERM` to the container.
+  - Without graceful shutdown, in-flight HTTP requests are severed mid-wire, causing clients to see `ECONNRESET`, `502 Bad Gateway`, or partial state mutations (e.g., token deducted in Redis but client received no response).
+  - RateFortress registers signal handlers for `SIGTERM` and `SIGINT`:
+    1. Sets `app.state.is_shutting_down = True`.
+    2. Any *new* requests arriving are rejected immediately with HTTP 503 (`Retry-After: 5`, detail: `"Server is shutting down. In-flight requests draining."`).
+    3. Readiness probe `/health/ready` immediately flips to 503, signaling upstream reverse proxies and load balancers to stop routing traffic.
+    4. In-flight requests (tracked via `_active_requests`) are granted a bounded grace period (default 10s, orchestrator `terminationGracePeriodSeconds: 15`) to complete and return HTTP 200.
+    5. `drain_in_flight()` completes once `_active_requests == 0`, and the process terminates cleanly with exit code 0.
+- **Tests Added:** `tests/test_graceful_shutdown.py` (3 tests verifying that in-flight slow requests complete successfully while concurrent new requests receive 503 during shutdown, readiness returns 503, and idle drain succeeds).
+- **Milestone Reached:** 🎉 **Capstone Production Hardening Complete! RateFortress verified with 211 automated tests passing with zero failures.**
