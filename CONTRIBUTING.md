@@ -60,3 +60,4 @@ pytest -v
 - Maintain documentation integrity: all public classes and functions should include descriptive docstrings.
 - Zero test regressions: all 200+ existing tests must pass before opening a Pull Request.
 - Concurrency verification: changes touching stateful storage or rate checks must include multi-threaded concurrency assertions.
+
