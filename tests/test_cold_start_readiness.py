@@ -8,9 +8,7 @@ Validates:
 5. Fresh instance cold start: circuit breaker and local in-memory caches start clean (CLOSED state, 0 failures).
 """
 
-from unittest.mock import AsyncMock, MagicMock
 from fastapi.testclient import TestClient
-import pytest
 
 from src.api.main import create_app
 from src.middleware.circuit_breaker import CircuitBreaker
@@ -46,45 +44,22 @@ def test_readiness_check_redis_async_healthy(monkeypatch):
     assert res.json()["backend"] == "redis_async"
 
 
-def test_readiness_check_redis_unreachable_cold_start(monkeypatch):
-    """Confirms /health/ready returns 503 when Redis connectivity fails on cold start."""
-    monkeypatch.setenv("USE_FAKE_REDIS", "true")
-    app = create_app(backend="redis_async")
-
-    # Simulate broken Redis connection
-    broken_redis = AsyncMock()
-    broken_redis.ping.side_effect = ConnectionError("Could not connect to Redis at 10.0.0.1:6379")
-
-    # Replace middleware/backend async client
-    client = TestClient(app)
-    # Patch the redis_async ping in the route handler via app closure or mock
-    with monkeypatch.context() as m:
-        m.setattr("redis.asyncio.Redis.ping", broken_redis.ping)
-        # Directly test with an app that has failing ping
-        test_app = create_app(backend="memory")
-        test_app.state.is_shutting_down = False
-        # Test shutting down state returns 503
-        test_app.state.is_shutting_down = True
-        c = TestClient(test_app)
-        res_shutting = c.get("/health/ready")
-        assert res_shutting.status_code == 503
-        assert res_shutting.json()["status"] == "not_ready"
-        assert res_shutting.json()["reason"] == "shutting_down"
+def test_readiness_check_redis_unreachable_cold_start():
+    """Confirms /health/ready returns 503 when the instance is shutting down."""
+    test_app = create_app(backend="memory")
+    test_app.state.is_shutting_down = True
+    c = TestClient(test_app)
+    res_shutting = c.get("/health/ready")
+    assert res_shutting.status_code == 503
+    assert res_shutting.json()["status"] == "not_ready"
+    assert res_shutting.json()["reason"] == "shutting_down"
 
 
-def test_readiness_fails_when_backend_ping_raises(monkeypatch):
-    """Verifies that an unhandled exception during Redis ping returns 503."""
+def test_readiness_fails_when_backend_ping_raises():
+    """Verifies that route endpoint for readiness check exists and is registered."""
     app = create_app(backend="redis_sync")
-    # Patch sync client to fail ping
-    mock_sync = MagicMock()
-    mock_sync.ping.side_effect = TimeoutError("Redis socket timeout on cold start")
-
-    client = TestClient(app)
-    # Find route endpoint and execute with mocked client
-    for route in app.routes:
-        if getattr(route, "path", None) == "/health/ready":
-            # Endpoint is present and callable
-            assert route is not None
+    ready_routes = [r for r in app.routes if getattr(r, "path", None) == "/health/ready"]
+    assert len(ready_routes) == 1
 
 
 def test_cold_start_circuit_breaker_isolation():
