@@ -22,7 +22,11 @@ from src.storage.redis_client import get_redis_client, get_shared_fake_server
 logger = logging.getLogger("ratefortress.api")
 
 
-def create_app(backend: str | None = None) -> FastAPI:
+def create_app(
+    backend: str | None = None,
+    global_ip_limit: int | None = None,
+    global_ip_window: int | None = None,
+) -> FastAPI:
     """Application factory supporting configurable rate limiting backends."""
     active_backend = backend or os.getenv("RATEFORTRESS_BACKEND", "memory").lower()
 
@@ -118,6 +122,8 @@ def create_app(backend: str | None = None) -> FastAPI:
         async_redis_client=redis_async,
         key_manager=key_manager,
         priority_queue=priority_queue,
+        global_ip_limit=global_ip_limit,
+        global_ip_window=global_ip_window,
     )
 
     @application.get("/")

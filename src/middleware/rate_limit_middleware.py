@@ -65,6 +65,16 @@ TIER_PRIORITY_MAP: dict[str, int] = {
 }
 
 
+def format_compound_key(api_key: str | None, endpoint: str, ip: str) -> str:
+    """Formats a multi-dimensional compound rate limiting key combining identity, route, and network IP.
+
+    Format: {api_key or 'anon'}:{endpoint}:{ip}
+    """
+    key_part = api_key or "anon"
+    clean_endpoint = endpoint.strip("/").replace("/", "_") or "root"
+    return f"{key_part}:{clean_endpoint}:{ip}"
+
+
 class RateLimitMiddleware(BaseHTTPMiddleware):
     """Production rate limiting middleware for ASGI applications.
 
@@ -81,6 +91,9 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         max_queue_depth: Maximum requests held in the priority queue before dropping.
         queue_timeout: Maximum seconds a prioritized request will wait in queue before timing out.
         shed_free_tier: Whether free-tier requests are shed immediately under saturation.
+        global_ip_limit: Global rate limit quota across all endpoints per IP (Day 141 compound key).
+        global_ip_window: Window duration in seconds for global per-IP limiting.
+        global_ip_algorithm: Algorithm used for global per-IP limiting.
     """
 
     def __init__(
@@ -99,6 +112,9 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         max_queue_depth: int | None = None,
         queue_timeout: float | None = None,
         shed_free_tier: bool | None = None,
+        global_ip_limit: int | None = None,
+        global_ip_window: int | None = None,
+        global_ip_algorithm: str = "fixed_window",
     ):
         super().__init__(app)
         self.redis_client = redis_client
@@ -147,6 +163,20 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         self._active_requests = 0
         self._active_waiters = 0
 
+        # Day 141 Compound Key: Global per-IP rate limiting configuration
+        self.global_ip_limit = (
+            global_ip_limit
+            if global_ip_limit is not None
+            else (int(os.getenv("RATEFORTRESS_GLOBAL_IP_LIMIT", "0")) or None)
+        )
+        self.global_ip_window = (
+            global_ip_window
+            if global_ip_window is not None
+            else int(os.getenv("RATEFORTRESS_GLOBAL_IP_WINDOW", "60"))
+        )
+        self.global_ip_algorithm = global_ip_algorithm or "fixed_window"
+        self.global_ip_limiter = self._create_global_ip_limiter()
+
         # Detect if redis_client passed is actually an async client
         if redis_client is not None and (
             inspect.iscoroutinefunction(getattr(redis_client, "ping", None))
@@ -186,6 +216,106 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         # Per-route limiter cache: (cache_key) -> algorithm instance
         self._limiter_cache: dict[str, Any] = {}
 
+    def _create_global_ip_limiter(self) -> Any:
+        """Instantiates the global per-IP limiter matching the active storage backend."""
+        if not self.global_ip_limit:
+            return None
+
+        algo = self.global_ip_algorithm
+        limit = self.global_ip_limit
+        win = self.global_ip_window
+        ns = "global_ip"
+
+        if self.async_redis_client:
+            if algo == "sliding_window_counter":
+                return AsyncRedisSlidingWindowCounter(
+                    self.async_redis_client, limit=limit, window_seconds=win, namespace=ns
+                )
+            elif algo == "sliding_window_log":
+                return AsyncRedisSlidingWindowLog(
+                    self.async_redis_client, limit=limit, window_seconds=win, namespace=ns
+                )
+            elif algo == "token_bucket":
+                return AsyncRedisTokenBucket(
+                    self.async_redis_client,
+                    capacity=limit,
+                    refill_rate=float(limit) / float(win),
+                    namespace=ns,
+                )
+            elif algo == "leaky_bucket":
+                return AsyncRedisLeakyBucket(
+                    self.async_redis_client,
+                    capacity=limit,
+                    leak_rate=float(limit) / float(win),
+                    namespace=ns,
+                )
+            elif algo in ("gcra", "cell_rate"):
+                return AsyncRedisGCRA(
+                    self.async_redis_client, limit=limit, period=float(win), namespace=ns
+                )
+            else:
+                return AsyncRedisFixedWindow(
+                    self.async_redis_client, limit=limit, window_seconds=win, namespace=ns
+                )
+        elif self.redis_client:
+            if algo == "sliding_window_counter":
+                return RedisSlidingWindowCounter(
+                    self.redis_client, limit=limit, window_seconds=win, namespace=ns
+                )
+            elif algo == "sliding_window_log":
+                return RedisSlidingWindowLog(
+                    self.redis_client, limit=limit, window_seconds=win, namespace=ns
+                )
+            elif algo == "token_bucket":
+                return RedisTokenBucket(
+                    self.redis_client,
+                    capacity=limit,
+                    refill_rate_per_sec=float(limit) / float(win),
+                    namespace=ns,
+                )
+            elif algo == "leaky_bucket":
+                return RedisLeakyBucket(
+                    self.redis_client,
+                    capacity=limit,
+                    leak_rate_per_sec=float(limit) / float(win),
+                    namespace=ns,
+                )
+            elif algo in ("gcra", "cell_rate"):
+                return RedisGCRA(
+                    self.redis_client, limit=limit, period=float(win), namespace=ns
+                )
+            else:
+                return RedisFixedWindow(
+                    self.redis_client, limit=limit, window_seconds=win, namespace=ns
+                )
+        else:
+            if algo == "sliding_window_counter":
+                return SlidingWindowCounter(limit=limit, window_seconds=win)
+            elif algo == "sliding_window_log":
+                return SlidingWindowLog(limit=limit, window_seconds=win)
+            elif algo == "token_bucket":
+                return TokenBucket(
+                    capacity=limit, refill_rate_per_sec=float(limit) / float(win)
+                )
+            elif algo == "leaky_bucket":
+                return LeakyBucket(
+                    capacity=limit, leak_rate_per_sec=float(limit) / float(win)
+                )
+            elif algo in ("gcra", "cell_rate"):
+                return GCRA(limit=limit, period=float(win))
+            else:
+                return FixedWindowCounter(limit=limit, window_seconds=win)
+
+    def _resolve_ip(self, request: Request) -> str:
+        """Resolves client IP with anti-spoofing trusted proxy validation."""
+        peer_ip = request.client.host if request.client else "unknown_client"
+        forwarded_for = request.headers.get("x-forwarded-for")
+        return resolve_client_ip(
+            peer_ip=peer_ip,
+            forwarded_for=forwarded_for,
+            trusted_networks=self.trusted_proxies,
+        )
+
     def _get_client_identity(self, request: Request) -> tuple[str, str, int]:
         """Resolves (client_id, tier, limit_multiplier).
 
@@ -201,15 +331,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                 tier_info = self.api_keys[api_key]
                 return api_key, tier_info["tier"], tier_info["limit_multiplier"]
 
-        # Fallback to IP address with anti-spoofing trusted proxy resolution
-        peer_ip = request.client.host if request.client else "unknown_client"
-        forwarded_for = request.headers.get("x-forwarded-for")
-        ip = resolve_client_ip(
-            peer_ip=peer_ip,
-            forwarded_for=forwarded_for,
-            trusted_networks=self.trusted_proxies,
-        )
-
+        ip = self._resolve_ip(request)
         return f"ip_{ip}", "anonymous", 1
 
     def _get_limiter_for_route(self, path: str, multiplier: int):
@@ -432,6 +554,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         slot_acquired = False
         try:
             client_id, tier, multiplier = self._get_client_identity(request)
+            client_ip = self._resolve_ip(request)
             limiter, nominal_limit, algorithm_name = self._get_limiter_for_route(
                 path, multiplier
             )
@@ -544,6 +667,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                         "X-RateLimit-Remaining": str(remaining),
                         "Retry-After": str(retry_after),
                         "X-RateLimit-Tier": tier,
+                        "X-RateLimit-Scope": "key" if client_id != f"ip_{client_ip}" else "ip",
                         "X-Request-ID": request_id,
                     }
                     elapsed = time.perf_counter() - start_time
@@ -573,6 +697,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                             "limiter_overhead_ms": round(limiter_overhead * 1000, 3),
                             "retry_after": retry_after,
                             "remaining": 0,
+                            "scope": "key" if client_id != f"ip_{client_ip}" else "ip",
                         },
                     )
 
@@ -585,6 +710,72 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                         },
                         headers=headers,
                     )
+
+                # Secondary dimension: global per-IP limit check (ANDed)
+                if self.global_ip_limiter is not None:
+                    ip_key = f"ip_{client_ip}"
+                    is_ip_coro = inspect.iscoroutinefunction(
+                        self.global_ip_limiter.is_allowed
+                    )
+                    if is_ip_coro:
+                        ip_allowed = await self.circuit_breaker.async_call(
+                            self.global_ip_limiter.is_allowed, ip_key, fallback=True
+                        )
+                    else:
+                        ip_allowed = self.circuit_breaker.call(
+                            self.global_ip_limiter.is_allowed, ip_key, fallback=True
+                        )
+
+                    if not ip_allowed:
+                        ip_retry_after = await self._safe_retry_after(
+                            self.global_ip_limiter, ip_key
+                        )
+                        headers = {
+                            "X-RateLimit-Limit": str(self.global_ip_limit),
+                            "X-RateLimit-Remaining": "0",
+                            "Retry-After": str(ip_retry_after),
+                            "X-RateLimit-Tier": tier,
+                            "X-RateLimit-Scope": "ip",
+                            "X-Request-ID": request_id,
+                        }
+                        elapsed = time.perf_counter() - start_time
+                        REQUEST_COUNT.labels(
+                            endpoint=path,
+                            status="blocked",
+                            algorithm=self.global_ip_algorithm,
+                            tier=tier,
+                        ).inc()
+                        BLOCKED_REQUESTS.labels(
+                            endpoint=path, tier=tier, algorithm=self.global_ip_algorithm
+                        ).inc()
+                        REQUEST_LATENCY.labels(endpoint=path, status="blocked").observe(elapsed)
+
+                        app_logger.warning(
+                            "Global IP rate limit quota exceeded",
+                            extra={
+                                "request_id": request_id,
+                                "client_id": ip_key,
+                                "tier": tier,
+                                "algorithm": self.global_ip_algorithm,
+                                "endpoint": path,
+                                "method": request.method,
+                                "status_code": 429,
+                                "latency_ms": round(elapsed * 1000, 2),
+                                "retry_after": ip_retry_after,
+                                "remaining": 0,
+                                "scope": "ip",
+                            },
+                        )
+
+                        return JSONResponse(
+                            status_code=429,
+                            content={
+                                "error": "rate limit exceeded",
+                                "detail": f"Global IP quota of {self.global_ip_limit} requests exceeded for IP {client_ip}.",
+                                "retry_after": ip_retry_after,
+                            },
+                            headers=headers,
+                        )
 
             response = await call_next(request)
             elapsed = time.perf_counter() - start_time
@@ -604,13 +795,33 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             except Exception:
                 remaining = nominal_limit
 
-            response.headers["X-RateLimit-Limit"] = str(nominal_limit)
-            response.headers["X-RateLimit-Remaining"] = str(remaining)
+            stricter_limit = nominal_limit
+            stricter_remaining = remaining
+            scope_label = "key" if client_id != f"ip_{client_ip}" else "ip"
+
+            if self.global_ip_limiter is not None:
+                try:
+                    ip_key = f"ip_{client_ip}"
+                    ip_rem = await self._safe_remaining(
+                        self.global_ip_limiter, ip_key, self.global_ip_limit
+                    )
+                    response.headers["X-RateLimit-IP-Limit"] = str(self.global_ip_limit)
+                    response.headers["X-RateLimit-IP-Remaining"] = str(ip_rem)
+                    if ip_rem < remaining:
+                        stricter_remaining = ip_rem
+                        stricter_limit = self.global_ip_limit
+                        scope_label = "ip"
+                except Exception as exc:
+                    app_logger.debug("Could not resolve IP remaining quota: %s", exc)
+
+            response.headers["X-RateLimit-Limit"] = str(stricter_limit)
+            response.headers["X-RateLimit-Remaining"] = str(stricter_remaining)
             # RFC 6585: Retry-After is reserved for 429 / 503 responses (or when remaining quota is exhausted)
-            if remaining == 0:
+            if stricter_remaining == 0:
                 retry_after = await self._safe_retry_after(limiter, client_id)
                 response.headers["Retry-After"] = str(retry_after)
             response.headers["X-RateLimit-Tier"] = tier
+            response.headers["X-RateLimit-Scope"] = scope_label
             response.headers["X-Request-ID"] = request_id
 
             # Emit structured JSON log event for Loki
