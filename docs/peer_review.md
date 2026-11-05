@@ -1,52 +1,35 @@
-# RateFortress — Architectural Peer Review & Code Quality Audit
+# RateFortress — Code Quality Audit & Self-Review
 
-**Review Objective:** Rigorous systems inspection evaluating concurrency guarantees, resource lifecycles, fault tolerance, API contract hygiene, and operational safety.
+These are my audit notes reviewing concurrency guarantees, resource lifecycles, and failure modes across the codebase.
 
 ---
 
 ## 1. Concurrency & Atomicity Audit
 
-- [x] **Race-Condition Free Counter Increments:**
-  - *Verification:* Evaluated in `tests/test_redis_concurrency.py` under 50-thread concurrent barrage with quota=10.
-  - *Result:* Exact 0% over-admission across all Redis algorithms.
-  - *Mechanism:* Redis executes custom Lua scripts (`EVALSHA`) atomically in its single-threaded command processing loop.
-- [x] **Elimination of TOCTOU (Time-of-Check to Time-of-Use):**
-  - *Verification:* Token Bucket refill math, Sliding Window Log sorted set pruning (`ZREMRANGEBYSCORE`), and GCRA TAT evaluations occur within the single Lua execution context before any state is written back.
-- [x] **Zero Memory Leaks in Concurrency Queues:**
-  - *Verification:* `BoundedBlockingQueue` and `MyCircularQueue` tested under multi-threaded producer-consumer backpressure (`tests/test_dsa_week8.py`) with zero thread deadlocks.
+- Race-condition free increments: I verified this in tests/test_redis_concurrency.py under a 50-thread barrage with quota=10. All Redis algorithms achieved 0% over-admission because custom Lua scripts run atomically inside Redis.
+- Elimination of check-then-set race conditions: Token refill math, sliding window log pruning, and GCRA TAT evaluations occur within the single Lua execution context before state updates.
+- Concurrency queues: BoundedBlockingQueue and MyCircularQueue tested under multi-threaded producer-consumer backpressure in tests/test_dsa_week8.py with zero deadlocks.
 
 ---
 
-## 2. Resource Management & Operational Hygiene
+## 2. Resource Management & Lifecycles
 
-- [x] **100% TTL Coverage Across Redis Keys:**
-  - *Verification:* `tests/test_redis_ttl_strategy.py` asserts that every key generated across all 6 algorithms has an active positive TTL.
-  - *Safeguard:* Redis configured with `maxmemory-policy volatile-lru` prevents memory exhaustion while preserving non-expiring configuration.
-- [x] **Zero Async Socket Starvation:**
-  - *Verification:* `redis.asyncio` used across ASGI middleware dispatch path. 500-user Locust load test confirmed 23.5% latency reduction and flat RSS memory drift (-0.01 MB over soak runs).
-- [x] **Connection Pool & Socket Cleanup:**
-  - *Verification:* FastAPI `lifespan` handler closes both synchronous and asynchronous connection pools gracefully on SIGTERM/SIGINT.
+- TTL coverage across Redis keys: tests/test_redis_ttl_strategy.py asserts that every key generated across all six algorithms has a positive TTL. Setting maxmemory-policy volatile-lru ensures expired keys drop under memory pressure.
+- Non-blocking socket I/O: Using redis.asyncio across the middleware dispatch path dropped median latency by 23.5% under 500 concurrent users with flat memory drift during soak runs.
+- Connection cleanup: FastAPI lifespan handler closes Redis connection pools when receiving termination signals.
 
 ---
 
 ## 3. Resilience & Failure Isolation
 
-- [x] **Fail-Open Circuit Breaker:**
-  - *Verification:* `CircuitBreaker` trips to `OPEN` after 5 consecutive storage failures, allowing client traffic through with 200 OK and preventing Redis outages from causing an API gateway black hole.
-  - *Configurability:* Support for `fail_open=False` for monetary or sensitive endpoints where failing closed is mandatory.
-- [x] **Standard Proactive Response Headers:**
-  - *Verification:* Emits `X-RateLimit-Limit`, `X-RateLimit-Remaining`, and `Retry-After` on every response, enabling compliant clients to back off before receiving HTTP 429.
+- Fail-open circuit breaker: The circuit breaker trips open after five consecutive storage timeouts, letting requests through to upstream handlers rather than causing an API outage. Setting fail_open=False allows sensitive routes to fail closed instead.
+- Response headers: Emitting X-RateLimit-Limit, Remaining, and Retry-After headers on every response allows compliant clients to back off before receiving 429 status codes.
 
 ---
 
 ## 4. Security & Data Protection
 
-- [x] **Constant-Time API Key Verification:**
-  - *Verification:* `hmac.compare_digest` used in `APIKeyManager.verify_key` to neutralize side-channel timing attacks.
-- [x] **Zero-Downtime Key Rotation:**
-  - *Verification:* Dual-validity grace periods tested in `tests/test_security_hardening.py`.
-- [x] **Secrets Redaction in Observability Streams:**
-  - *Verification:* `JSONLogFormatter` automatically masks secret API keys (`key_...123`), preventing credential leakage into Loki or log aggregators.
-- [x] **Tooling Endpoint Protection:**
-  - *Verification:* Dedicated rate limits applied to `/compare` (30 req/min) and `/metrics` (60 req/min) to prevent CPU burn and scraping DoS.
-
+- Key verification: APIKeyManager uses hmac.compare_digest for constant-time secret comparison to avoid timing leaks.
+- Key rotation: Dual-validity grace periods tested in tests/test_security_hardening.py allow rotating keys without downtime.
+- Log sanitization: JSONLogFormatter masks secret API keys so credentials do not leak into Loki logs.
+- Admin protection: Rate limits applied to /compare (30 req/min) and /metrics (60 req/min) protect internal endpoints from scrape bursts.

@@ -1,11 +1,4 @@
-"""Tests for Day 141: Rate Limiting by Compound Key (Multi-Dimensional Enforcement).
-
-Validates:
-1. Multi-dimensional key formatting combining identity, route, and network IP.
-2. Independent per-key quotas across clients sharing the same network IP.
-3. Strict enforcement of shared per-IP global quotas when multiple keys exceed the IP quota.
-4. Response headers dynamically reflecting the stricter dimension.
-"""
+"""Tests for Rate Limiting by Compound Key (Multi-Dimensional Enforcement)."""
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -19,7 +12,7 @@ from src.middleware.rate_limit_middleware import (
 
 
 def test_format_compound_key():
-    """Validates multi-dimensional compound key string construction."""
+    """Check multi-dimensional compound key string construction."""
     key = format_compound_key("key_paid_xyz", "/api/v1/resource", "203.0.113.50")
     assert key == "key_paid_xyz:api_v1_resource:203.0.113.50"
 
@@ -28,13 +21,7 @@ def test_format_compound_key():
 
 
 def test_shared_ip_independent_keys_and_shared_ip_limit():
-    """Confirms per-key limits are independent, while the shared per-IP limit applies across both.
-
-    Setup:
-    - Route '/api/test' rule limit = 4 requests per key.
-    - Global IP limit = 6 requests for the entire IP across all keys.
-    - Two users (User A and User B) share the same IP.
-    """
+    """Check per-key limits are independent, while the shared per-IP limit applies across both."""
     key_manager = APIKeyManager()
     key_a = key_manager.issue_key(tier="free", limit_multiplier=1, custom_key_id="key_user_a")
     key_b = key_manager.issue_key(tier="free", limit_multiplier=1, custom_key_id="key_user_b")
@@ -89,7 +76,7 @@ def test_shared_ip_independent_keys_and_shared_ip_limit():
 
 
 def test_stricter_per_key_limit_blocks_before_ip_limit():
-    """Confirms that if a key's limit is stricter than the IP limit, key limit triggers first."""
+    """Check if a key's limit is stricter than the IP limit, key limit triggers first."""
     key_manager = APIKeyManager()
     key_a = key_manager.issue_key(tier="free", limit_multiplier=1, custom_key_id="key_solo_a")
     key_b = key_manager.issue_key(tier="free", limit_multiplier=1, custom_key_id="key_solo_b")
@@ -130,7 +117,7 @@ def test_stricter_per_key_limit_blocks_before_ip_limit():
 
 
 def test_headers_reflect_stricter_dimension():
-    """Confirms X-RateLimit-Remaining and X-RateLimit-Limit track the governing stricter dimension."""
+    """Check X-RateLimit-Remaining and X-RateLimit-Limit track the governing stricter dimension."""
     key_manager = APIKeyManager()
     key = key_manager.issue_key(tier="free", limit_multiplier=1, custom_key_id="key_header_test")
 

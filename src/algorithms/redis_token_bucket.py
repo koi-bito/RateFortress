@@ -1,8 +1,4 @@
-"""Redis-backed Token Bucket rate limiting algorithm using atomic Lua scripting.
-
-Guarantees full atomicity across distributed application instances: token refill,
-capacity capping, consumption, and expiration occur within a single isolated Redis Lua execution.
-"""
+"""Redis-backed Token Bucket rate limiting algorithm using atomic Lua scripting."""
 
 import time
 from pathlib import Path
@@ -41,10 +37,6 @@ class RedisTokenBucket:
         return f"token_bucket:{self.namespace}:{user_id}"
 
     def is_allowed(self, user_id: str, tokens: int = 1) -> bool:
-        """Evaluates whether user_id is permitted to consume `tokens`.
-
-        Returns True if tokens were consumed; False otherwise.
-        """
         if tokens <= 0:
             raise ValueError("Requested tokens must be positive.")
 
@@ -58,7 +50,6 @@ class RedisTokenBucket:
         return bool(res[0])
 
     def remaining(self, user_id: str) -> int:
-        """Returns the available integer token count without consuming any tokens."""
         key = self._key(user_id)
         now = time.time()
         res = self._script(
@@ -68,11 +59,9 @@ class RedisTokenBucket:
         return int(res[1])
 
     def get_remaining(self, user_id: str) -> int:
-        """Alias for `remaining`."""
         return self.remaining(user_id)
 
     def retry_after(self, user_id: str) -> int:
-        """Returns the seconds to wait until at least 1 token is refilled."""
         key = self._key(user_id)
         now = time.time()
         res = self._script(
@@ -82,10 +71,8 @@ class RedisTokenBucket:
         return int(res[2])
 
     def get_retry_after(self, user_id: str) -> int:
-        """Alias for `retry_after`."""
         return self.retry_after(user_id)
 
     @property
     def limit(self) -> int:
-        """Returns the maximum nominal capacity of the bucket."""
         return int(self.capacity)

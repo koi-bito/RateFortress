@@ -1,8 +1,4 @@
-"""Asynchronous Redis-backed Sliding Window Counter rate limiting algorithm using atomic Lua scripting.
-
-Smooths window boundaries using a weighted rolling estimate with O(1) memory,
-executing non-blocking atomic Lua script calls via redis.asyncio.
-"""
+"""Asynchronous Redis-backed Sliding Window Counter rate limiting algorithm using atomic Lua scripting."""
 
 import time
 from pathlib import Path
@@ -52,7 +48,6 @@ class AsyncRedisSlidingWindowCounter:
         return curr_key, prev_key, weight_prev
 
     async def is_allowed(self, user_id: str) -> bool:
-        """Determines if a request from user_id is permitted based on the atomic weighted count."""
         now = time.time()
         curr_key, prev_key, weight_prev = self._keys(user_id, now)
         ttl = 2 * self.window_seconds + 2
@@ -64,7 +59,6 @@ class AsyncRedisSlidingWindowCounter:
         return bool(res[0])
 
     async def remaining(self, user_id: str) -> int:
-        """Returns the estimated remaining request quota for user_id."""
         now = time.time()
         curr_key, prev_key, weight_prev = self._keys(user_id, now)
         ttl = 2 * self.window_seconds + 2
@@ -79,7 +73,6 @@ class AsyncRedisSlidingWindowCounter:
         return await self.remaining(user_id)
 
     async def retry_after(self, user_id: str) -> int:
-        """Returns the seconds remaining until the rate limit permits a request."""
         now = time.time()
         curr_key, prev_key, weight_prev = self._keys(user_id, now)
         ttl = 2 * self.window_seconds + 2

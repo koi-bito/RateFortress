@@ -1,59 +1,54 @@
-# RateFortress — Senior Technical Capstone Deep Dive
+# RateFortress — Capstone Deep Dive & Technical Walkthrough Notes
 
-**Duration:** ~15 minutes  
-**Format:** Architectural Whiteboard & Codebase Walkthrough  
-**Target Audience:** Staff / Principal Engineers and Technical Interviewers  
+These are my talking notes for a 15-minute walkthrough of the RateFortress codebase and architecture.
 
 ---
 
-## 0:00 – 2:30: Motivation, Core Failure Modes & Problem Framing
+## 0:00 to 2:30: Motivation, Core Failure Modes & Problem Framing
 
-- **The Problem:** Rate limiting looks trivial when taught in tutorials: `redis.incr(key)`. In production, naive implementations cause severe outages:
-  1. *Horizontal Multi-Instance Multiplier:* In-memory limits multiply allowed traffic by $M$ across $M$ worker instances.
-  2. *Check-Then-Set Race Conditions:* In a distributed system, a separate `GET` then `SET` leaks 100%+ over-admission under concurrent bursts.
-  3. *Window Boundary Bursts:* Fixed windows allow $2\times$ traffic spikes at reset boundaries.
-  4. *ASGI Event Loop Starvation:* Synchronous database calls in modern async Python servers (Uvicorn/FastAPI) freeze the single operating system thread running the event loop.
-- **Project Scope:** RateFortress implements 6 distinct rate limiting algorithms in pure Python and distributed Redis 7, backs them with atomic Lua scripts, provides pluggable ASGI middleware with trie routing and tier multipliers, and wraps everything in comprehensive Prometheus, Grafana, Loki, and OpenTelemetry observability.
+Rate limiting seems simple when looking at basic examples with a single counter. In real systems, several edge cases break naive implementations:
+1. Multi-instance scaling: In-memory limits multiply allowed traffic across workers unless state is centralized.
+2. Check-then-set race conditions: A separate read followed by a write lets concurrent bursts through.
+3. Window boundary bursts: Fixed windows allow double the nominal traffic right across the reset boundary.
+4. Event loop stalls: Synchronous Redis calls in an async server freeze the main event loop thread.
 
----
-
-## 2:30 – 6:00: Deep Dive on the 6 Algorithms & Mathematical Formulations
-
-- **Fixed Window Counter:** $O(1)$ memory, fastest execution, but vulnerable to boundary spikes.
-- **Sliding Window Log:** Stores exact timestamps in a doubly-linked deque or Redis Sorted Set (`ZSET`). Prunes expired entries via `ZREMRANGEBYSCORE`. 100% mathematically exact, but $O(N)$ memory cost per client.
-- **Sliding Window Counter:** Blends previous and current window counts:
-  $$\text{Estimate} = \text{Count}_{\text{prev}} \times \left(1 - \frac{\text{elapsed}}{\text{window}}\right) + \text{Count}_{\text{current}}$$
-  Gives smooth boundary protection with strictly $O(1)$ RAM.
-- **Token Bucket:** Lazy refill calculation on each request:
-  $$\Delta t = \text{now} - \text{last\_refill}, \quad \text{tokens} = \min(\text{capacity}, \text{tokens} + \Delta t \times \text{refill\_rate})$$
-  Accommodates natural client bursts up to bucket capacity while capping sustained consumption.
-- **Leaky Bucket:** Constant egress rate. Rejects bursts to protect fragile downstream services.
-- **GCRA (Generic Cell Rate Algorithm):** Stripe's production algorithm. Replaces floating-point token math with a single Theoretical Arrival Time (TAT):
-  $$\text{new\_TAT} = \max(\text{now}, \text{TAT}) + \text{emission\_interval}$$
-  Permits bursts up to burst tolerance $\tau = T \times (\text{limit} - 1)$ while tracking only a single scalar timestamp in Redis (~32 bytes).
+I built RateFortress to implement six algorithms in Python and Redis, back them with atomic Lua scripts, wrap them in FastAPI middleware, and wire up metrics and tracing to see how each behaves.
 
 ---
 
-## 6:00 – 9:00: The Concurrency Elimination via Atomic Lua Scripts
+## 2:30 to 6:00: The Six Algorithms & Their Mechanics
 
-- **The TOCTOU Race Condition:** Explain our Day 42 concurrency benchmark where 50 concurrent threads hammered a quota of 10. Non-atomic Redis pipelines admitted 22 requests (120% leak) because all threads read count $< 10$ before any thread wrote.
-- **The Solution:** Authored custom Lua scripts (`redis_token_bucket.lua`, `redis_gcra.lua`, `redis_sliding_window_log.lua`, `redis_sliding_window_counter.lua`, `redis_leaky_bucket.lua`).
-- **Why Lua Works:** Redis executes Lua scripts as an isolated atomic primitive on its single command loop. All checks, refills, and state mutations execute in a single tick with 0% race conditions.
-- **The Multi-Node Cluster Trap:** Show why RateFortress scripts operate strictly on `KEYS[1]`, avoiding the dreaded Redis Cluster `CROSSSLOT` error.
-
----
-
-## 9:00 – 12:00: Event Loop Architecture & The Async Redis Migration
-
-- **Why Sync Redis Failed:** During Day 48 Locust load testing at 500 concurrent users, median latency was 17ms. Expanding the connection pool from 10 to 100 connections did nothing because synchronous socket reads blocked Uvicorn's OS thread.
-- **The Migration to `redis.asyncio`:** Rewrote middleware and limiters with non-blocking async calls. Under identical 500-user load, median latency dropped from 17ms to 13ms (-23.5%) and p95 tail latency dropped from 88ms to 52ms (-40.9%).
-- **Fail-Open Circuit Breaker:** Walk through `src/middleware/circuit_breaker.py`. Trips to `OPEN` after 5 failures to ensure storage blips never cause an API black hole.
+- Fixed Window Counter: O(1) memory and fastest to compute, but lets up to 2x traffic pass if bursts straddle window boundaries.
+- Sliding Window Log: Stores timestamps in a deque or Redis sorted set (ZSET) and trims old entries. Completely exact, but memory grows with traffic volume.
+- Sliding Window Counter: Blends current and previous window counts using a weighted estimate. Smooths boundary bursts while keeping memory constant at two numbers per key.
+- Token Bucket: Refills tokens lazily on each request based on elapsed time. Lets legitimate bursts through up to capacity while capping sustained consumption.
+- Leaky Bucket: Enforces a steady leak rate. Rejects bursts completely to protect downstream services that cannot tolerate sudden spikes.
+- GCRA (Generic Cell Rate Algorithm): Tracks a single theoretical arrival time per key. Gives strict rate shaping while storing only about 32 bytes of state in Redis.
 
 ---
 
-## 12:00 – 15:00: Full-Stack Observability, CI/CD, and Hard-Won Lessons
+## 6:00 to 9:00: Concurrency & Atomic Lua Scripts
 
-- **Observability:** Walk through Prometheus metrics (`ratefortress_requests_total`, `ratefortress_limiter_overhead_seconds`), Loki structured JSON logs with client key masking, OpenTelemetry tracing spans, and live Grafana dashboards.
-- **CI/CD Parity:** Discuss our post-mortem incidents: why `pytest-asyncio` must be explicitly declared, why `conftest.py` must set environment flags before top-level imports evaluate, and why `127.0.0.1` must be preferred over `localhost` on dual-stack IPv6 runners.
-- **Summary:** RateFortress bridges theoretical algorithms, distributed concurrency, production resilience, and cloud operations.
+On Day 42, I tested 50 concurrent threads against a limit of 10. When using non-atomic Redis pipelines, 22 requests slipped through because threads checked the counter before other threads incremented it.
 
+To fix this, I moved the check and mutation logic into Redis Lua scripts. Redis runs Lua scripts atomically on its single execution thread, so check-and-increment operations execute in a single step with 0% over-admission.
+
+All scripts operate strictly on a single key (`KEYS[1]`) so they run cleanly on Redis Cluster without cross-slot errors.
+
+---
+
+## 9:00 to 12:00: Event Loop Architecture & Async Redis
+
+During load testing at 500 concurrent users, the synchronous redis client caused median latency to jump to 17 ms. Increasing connection pool size did not help because synchronous socket reads blocked Uvicorn's event loop.
+
+I migrated the middleware and storage calls to redis.asyncio. Under the same 500-user load, median latency dropped from 17 ms to 13 ms because the event loop could process other requests while waiting on Redis responses.
+
+I also added a circuit breaker in `src/middleware/circuit_breaker.py`. If Redis fails repeatedly, the breaker trips open and lets traffic pass rather than hanging every client connection.
+
+---
+
+## 12:00 to 15:00: Observability, CI/CD, and Lessons Learned
+
+For observability, I wired up Prometheus counters and latency histograms, structured JSON logging for Loki with client ID masking, and OpenTelemetry tracing spans to measure limiter overhead.
+
+In CI/CD, I ran into practical issues worth remembering: setting environment variables in conftest before top-level imports execute, and preferring 127.0.0.1 over localhost on Windows and GitHub Actions runners to avoid IPv6 connection delays.

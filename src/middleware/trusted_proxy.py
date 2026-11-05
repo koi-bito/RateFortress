@@ -1,9 +1,4 @@
-"""Trusted Proxy Validation and Anti-Spoofing IP Resolution (Day 103).
-
-Prevents X-Forwarded-For rate limit bypass attacks by validating upstream peer IPs
-against trusted proxy networks (e.g. AWS ALB, Cloudflare, private VPC subnets)
-and traversing the proxy chain right-to-left.
-"""
+"""Trusted Proxy Validation and Anti-Spoofing IP Resolution (Day 103)."""
 
 from __future__ import annotations
 
@@ -21,7 +16,6 @@ DEFAULT_TRUSTED_PROXIES: list[str] = [
 
 
 def parse_trusted_proxies(config_str: str | None = None) -> list[ipaddress.IPv4Network | ipaddress.IPv6Network]:
-    """Parses comma-delimited CIDR or IP strings into ip_network objects."""
     raw = config_str if config_str is not None else os.getenv("TRUSTED_PROXIES", "")
     items = [x.strip() for x in raw.split(",") if x.strip()] if raw else DEFAULT_TRUSTED_PROXIES
     networks = []
@@ -36,7 +30,6 @@ def parse_trusted_proxies(config_str: str | None = None) -> list[ipaddress.IPv4N
 
 
 def is_trusted_peer(peer_ip: str, trusted_networks: list[ipaddress.IPv4Network | ipaddress.IPv6Network]) -> bool:
-    """Checks whether the raw peer IP connecting to the socket is a recognized trusted proxy."""
     if not peer_ip:
         return False
     if peer_ip in ("testclient", "testserver", "localhost"):
@@ -54,13 +47,6 @@ def resolve_client_ip(
     forwarded_for: str | None = None,
     trusted_networks: list[ipaddress.IPv4Network | ipaddress.IPv6Network] | None = None,
 ) -> str:
-    """Safely extracts true client IP without being deceived by spoofed X-Forwarded-For headers.
-
-    Security Rules:
-    1. If the connecting peer is NOT a trusted proxy, ignore X-Forwarded-For completely.
-    2. If the connecting peer IS trusted, parse X-Forwarded-For right-to-left, discarding
-       any intermediate trusted proxy IPs until reaching the first untrusted client IP.
-    """
     networks = trusted_networks if trusted_networks is not None else parse_trusted_proxies()
 
     # Rule 1: Untrusted peer -> ignore untrusted client headers

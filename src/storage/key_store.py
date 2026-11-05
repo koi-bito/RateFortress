@@ -1,8 +1,4 @@
-"""Persistent Key Store for RateFortress API Keys (Day 112).
-
-Provides abstract and concrete storage layers for API key persistence across server restarts,
-supporting Redis hashes/sets and an in-memory fallback.
-"""
+"""Persistent Key Store for RateFortress API Keys (Day 112)."""
 
 from __future__ import annotations
 
@@ -21,29 +17,28 @@ class KeyStore(ABC):
 
     @abstractmethod
     def get(self, key_id: str) -> dict[str, Any] | None:
-        """Retrieves key metadata by key ID."""
+        pass
 
     @abstractmethod
     def set(self, key_id: str, data: dict[str, Any]) -> None:
-        """Stores or updates key metadata."""
+        pass
 
     @abstractmethod
     def delete(self, key_id: str) -> bool:
-        """Deletes key metadata from the store."""
+        pass
 
     @abstractmethod
     def list_all(self) -> list[dict[str, Any]]:
-        """Lists all stored key metadata records."""
+        pass
 
     @abstractmethod
     def exists(self, key_id: str) -> bool:
-        """Checks if a key exists in the store."""
+        pass
 
     def publish_invalidation(self, message: str) -> None:
-        """Publishes an invalidation event for multi-worker synchronization."""
+        pass
 
     def subscribe_invalidation(self, callback: Any) -> Any:
-        """Subscribes to invalidation events for multi-worker synchronization."""
         return None
 
 
@@ -74,7 +69,7 @@ class MemoryKeyStore(KeyStore):
 
 
 class RedisKeyStore(KeyStore):
-    """Production Redis-backed key store storing metadata in hashes with an active index set."""
+    """Redis-backed key store storing metadata in hashes with an active index set."""
 
     KEY_PREFIX = "rf:keys:meta:"
     SET_NAME = "rf:keys:active_index"
@@ -159,7 +154,6 @@ _global_key_store: KeyStore | None = None
 
 
 def get_key_store(backend: str | None = None, redis_client: Any | None = None) -> KeyStore:
-    """Returns the singleton KeyStore instance."""
     global _global_key_store
     if _global_key_store is not None and backend is None:
         return _global_key_store
@@ -183,7 +177,6 @@ def get_key_store(backend: str | None = None, redis_client: Any | None = None) -
 
 
 def reset_key_store():
-    """Resets global key store singleton (for test isolation)."""
     global _global_key_store
     _global_key_store = None
 

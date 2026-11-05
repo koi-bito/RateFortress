@@ -1,4 +1,4 @@
-"""Validation tests for Weeks 16–20 Research Layer & Advanced Extensions."""
+"""Tests for Research Layer & Advanced Extensions."""
 
 from pathlib import Path
 
@@ -6,7 +6,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_research_publications_exist():
-    """Validates existence and key sections of technical publications."""
+    """Check existence and key sections of technical publications."""
     article = PROJECT_ROOT / "docs" / "comparative_benchmark_article.md"
     assert article.exists()
     content = article.read_text(encoding="utf-8")
@@ -28,7 +28,7 @@ def test_research_publications_exist():
 
 
 def test_scaling_and_cluster_docs():
-    """Validates docs/scaling.md covers hash slots, Lua CROSSSLOT constraints, and multi-region."""
+    """Check docs/scaling.md covers hash slots, Lua CROSSSLOT constraints, and multi-region."""
     scaling = PROJECT_ROOT / "docs" / "scaling.md"
     assert scaling.exists()
     content = scaling.read_text(encoding="utf-8")
@@ -38,7 +38,7 @@ def test_scaling_and_cluster_docs():
 
 
 def test_package_configuration():
-    """Validates pyproject.toml configuration and packaging guide."""
+    """Check pyproject.toml configuration and packaging guide."""
     pyproject = PROJECT_ROOT / "pyproject.toml"
     assert pyproject.exists()
     content = pyproject.read_text(encoding="utf-8")
@@ -49,7 +49,7 @@ def test_package_configuration():
 
 
 def test_capstone_artifacts():
-    """Validates peer review and capstone walkthrough script."""
+    """Check peer review and capstone walkthrough script."""
     review = PROJECT_ROOT / "docs" / "peer_review.md"
     assert review.exists()
 

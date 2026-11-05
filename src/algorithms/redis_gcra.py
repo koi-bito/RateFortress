@@ -1,8 +1,4 @@
-"""Redis-backed Generic Cell Rate Algorithm (GCRA) using atomic Lua scripting.
-
-Guarantees full atomicity across distributed application instances using a single Redis key
-representing the Theoretical Arrival Time (TAT).
-"""
+"""Redis-backed Generic Cell Rate Algorithm (GCRA) using atomic Lua scripting."""
 
 from __future__ import annotations
 
@@ -43,7 +39,6 @@ class RedisGCRA:
         return f"gcra:{self.namespace}:{user_id}"
 
     def is_allowed(self, user_id: str, cost: int = 1) -> bool:
-        """Evaluates whether user_id is permitted to consume `cost` units."""
         if cost <= 0:
             raise ValueError("Requested cost must be positive.")
 
@@ -62,7 +57,6 @@ class RedisGCRA:
         return bool(res[0])
 
     def remaining(self, user_id: str) -> int:
-        """Returns remaining permitted requests without consuming quota."""
         key = self._key(user_id)
         now = time.time()
         res = self._script(
@@ -78,11 +72,9 @@ class RedisGCRA:
         return int(res[1])
 
     def get_remaining(self, user_id: str) -> int:
-        """Alias for `remaining`."""
         return self.remaining(user_id)
 
     def retry_after(self, user_id: str) -> int:
-        """Returns seconds until next cell request is permitted."""
         key = self._key(user_id)
         now = time.time()
         res = self._script(
@@ -98,11 +90,9 @@ class RedisGCRA:
         return int(res[2])
 
     def get_retry_after(self, user_id: str) -> int:
-        """Alias for `retry_after`."""
         return self.retry_after(user_id)
 
     @property
     def limit(self) -> int:
-        """Returns the nominal capacity/limit."""
         return self.limit_val
 

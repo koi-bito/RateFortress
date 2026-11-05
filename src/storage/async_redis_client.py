@@ -1,9 +1,4 @@
-"""Asynchronous Redis connection manager for RateFortress.
-
-Provides unified non-blocking access to Redis using redis.asyncio,
-enabling FastAPI / ASGI event loops to perform rate-limiting checks and Lua script
-executions without blocking worker threads during network I/O.
-"""
+"""Asynchronous Redis connection manager for RateFortress."""
 
 import logging
 import os
@@ -24,12 +19,6 @@ async def get_async_redis_client(
     decode_responses: bool = True,
     fallback_to_fake: bool = True,
 ) -> Any:
-    """Creates and returns an asynchronous Redis client.
-
-    If a live Redis instance is reachable at host/port, returns `redis.asyncio.Redis`.
-    If unreachable and `fallback_to_fake=True`, returns `fakeredis.aioredis.FakeRedis`
-    bound to the shared fake server for local development and headless testing.
-    """
     redis_host = host or os.getenv("REDIS_HOST", "localhost")
     redis_port = port or int(os.getenv("REDIS_PORT", "6379"))
     redis_password = password or os.getenv("REDIS_PASSWORD", None)

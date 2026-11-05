@@ -1,4 +1,4 @@
-"""Unit and integration tests for RedisLeakyBucket algorithm."""
+"""Tests for RedisLeakyBucket algorithm."""
 
 import time
 

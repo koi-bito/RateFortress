@@ -1,56 +1,50 @@
-# ADR-001: Selection of Token Bucket and GCRA as Default Rate Limiting Algorithms
+# ADR-001: Choosing Token Bucket and GCRA as Default Algorithms
 
 - **Status:** Accepted
-- **Date:** 2026-10-30
-- **Authors:** RateFortress Architecture & Core Infrastructure Team
-- **Deciders:** Principal SWE, Backend Platform Lead, Distributed Systems Architect
-- **Technical Story:** Selection of default algorithmic engines for distributed API throttling across RateFortress gateway deployments.
+- Date: 2026-10-30
+- Author: Solo Developer
 
 ---
 
 ## 1. Context and Problem Statement
 
-Modern public API gateways must protect downstream microservices from traffic surges, abusive scrapers, and malicious denial-of-service attempts, while simultaneously enforcing commercial API subscription tiers.
+An API gateway needs to protect downstream services from spikes and abusive scrapers without punishing legitimate users who load a page and trigger several requests at once.
 
-To operate effectively at scale ($> 1,000,000\text{ req/sec}$ globally across millions of active tenants), the default rate limiting algorithm must satisfy four stringent criteria:
-1. **Predictable Sub-Millisecond Latency:** Evaluation overhead must remain below $1.5\text{ ms}$ (p99) on distributed Redis backends and below $1.0\ \mu\text{s}$ in local memory.
-2. **Minimal Memory Footprint:** Memory consumption per tracked client must remain $O(1)$ and $\le 200\text{ bytes}$ to allow tens of millions of concurrent client keys without memory exhaustion.
-3. **Burst Tolerance with Fair Long-Term Shaping:** Real-world clients (e.g. web browsers loading static assets or mobile apps synchronizing data on launch) generate bursty traffic. The algorithm must permit legitimate transient bursts up to a bounded capacity while enforcing a strict steady-state consumption rate.
-4. **Multi-Cost Support:** Support variable-cost requests (e.g., lightweight GET = 1 token, batch inference POST = 5 tokens) without architectural overhaul.
+I evaluated the algorithms against four requirements:
+1. Low evaluation latency: under 1.5 ms on Redis and under 1 microsecond in local memory.
+2. Low memory usage: O(1) space per client, keeping key sizes around 150 bytes so Redis memory does not explode under millions of active keys.
+3. Burst tolerance: allowing brief bursts for page loads while holding the long-term consumption to a steady rate.
+4. Variable request costs: supporting heavier endpoints that consume multiple units of quota in one call.
 
 ---
 
 ## 2. Decision
 
-We have decided to adopt **Token Bucket** as the **primary default rate limiting algorithm** across all standard RateFortress middleware deployments, and **GCRA (Generic Cell Rate Algorithm)** as the **standard alternative for ultra-high-throughput Redis environments**.
+I chose Token Bucket as the default rate limiting algorithm for RateFortress routes, with GCRA (Generic Cell Rate Algorithm) as the alternative when Redis memory is at a premium.
 
-All standard API endpoints will default to Token Bucket unless an endpoint explicitly configures specialized criteria in the Endpoint Trie.
+All routes use Token Bucket unless specifically configured otherwise in the endpoint trie.
 
 ---
 
 ## 3. Alternatives Considered
 
 ### Alternative 1: Fixed Window Counter
-- **Description:** Divides time into fixed discrete windows (e.g. 00:00–00:59). Increments a single counter per window.
-- **Why Rejected:** Suffers from the classic **$2\times$ boundary burst vulnerability**. A client can send its entire quota at 00:59 and another full quota at 01:00, dumping $200\%$ of permitted traffic into downstream services within a 2-second window.
+Fixed Window divides time into fixed blocks (such as 00:00 to 00:59) and increments a counter. I rejected it because of the 2x boundary spike problem: a user can send their full limit right at 00:59 and another full limit at 01:00, allowing double the allowed quota in two seconds.
 
 ### Alternative 2: Sliding Window Log
-- **Description:** Records individual timestamps for every request in a sorted set (`ZSET`), pruning expired entries on each check.
-- **Why Rejected:** Catastrophic memory overhead. At a nominal limit of 100 req/min per user, Sliding Window Log consumes $\approx 7,300\text{ bytes per user}$ ($\mathbf{58.8\times}$ more RAM than Token Bucket). At 10 million active keys, memory balloons to $> 72\text{ GB}$, compared to $\approx 2.1\text{ GB}$ for Token Bucket. Furthermore, sorted set insertions and range deletions run in $O(\log N + M)$ rather than $O(1)$.
+Sliding Window Log stores every request timestamp in a Redis sorted set (ZSET) and trims old timestamps. I rejected it as a default because of high memory usage. At 100 requests per minute per user, each user takes over 7 KB of RAM. Across millions of keys, that turns into tens of gigabytes of Redis memory, and sorting operations scale with window size rather than running in constant time.
 
 ### Alternative 3: Sliding Window Counter
-- **Description:** Combines the current window count with a weighted fraction of the previous window count.
-- **Why Rejected:** While memory-efficient ($\approx 150\text{ bytes}$), it is a mathematical approximation. During sudden burst traffic at boundary edges, it assumes an even distribution across the previous window, introducing a theoretical error margin of up to $15\%$.
+Sliding Window Counter estimates current volume by blending the current window count with a weighted slice of the previous window. It only takes around 150 bytes per user, but it is an approximation that assumes requests in the previous window were evenly spread.
 
 ### Alternative 4: Leaky Bucket
-- **Description:** Requests enter a buffer and leak out at a strictly uniform rate. Excess requests overflow and are dropped.
-- **Why Rejected:** Enforces an absolute constant egress rate with **zero burst tolerance**. Idle time cannot be banked. Legitimate clients opening multiple parallel connections (e.g., initial page load) suffer immediate 429 rejections despite zero historical usage.
+Leaky Bucket processes requests at a constant leak rate. I decided against it as the default because it allows zero bursts. If an idle client opens several parallel connections to fetch page assets, Leaky Bucket throttles them immediately even though they used no prior bandwidth.
 
 ---
 
-## 4. Empirical Benchmark Evidence
+## 4. Benchmark Results
 
-Our empirical benchmarks conducted on identical hardware across pure Python and Redis-backed implementations demonstrate the superiority of Token Bucket and GCRA:
+I tested each implementation in local Python and in Redis with Lua scripts:
 
 | Algorithm | Local Python Throughput | Redis Lua Throughput | Memory / Key | Exactness | Bursts Allowed? |
 | :--- | :--- | :--- | :--- | :--- | :--- |
@@ -60,22 +54,14 @@ Our empirical benchmarks conducted on identical hardware across pure Python and 
 | **Fixed Window** | $2,450,110\text{ req/s}$ | $6,720\text{ req/s}$ | $112\text{ B}$ | Exact | Flawed ($2\times$) |
 | **Sliding Window Log** | $1,120,450\text{ req/s}$ | $4,890\text{ req/s}$ | $7,300\text{ B}$ | Exact | Strict |
 
-### Key Observations:
-1. **GCRA achieves the highest throughput ($3.3\text{M req/s}$ local, $6.7\text{k req/s}$ Redis)** because it requires updating only a single timestamp (`tat`) rather than recalculating fractional token refills and token counts.
-2. **Token Bucket** achieves equivalent operational safety with superior developer ergonomics, as "tokens remaining" directly maps to user-facing headers (`X-RateLimit-Remaining: 15`).
+GCRA achieved slightly higher throughput because it updates only a single timestamp (the theoretical arrival time) instead of refilling and decrementing token counts. Token Bucket offers better developer usability, since remaining tokens directly map to the X-RateLimit-Remaining header.
 
 ---
 
-## 5. Consequences & Operational Guidelines
+## 5. Consequences & Operational Notes
 
-### Positive Consequences
-- **Memory Predictability:** Memory usage scales linearly at $\approx 144\text{ bytes per key}$. 10M keys consume $< 2.2\text{ GB}$ RAM.
-- **Sub-Millisecond Evaluation:** Both Token Bucket and GCRA evaluate in $O(1)$ arithmetic operations inside single Redis Lua executions.
-- **Native Multi-Cost Support:** Deducting multiple tokens (e.g. `cost = 5`) is a single atomic decrement step.
-
-### Negative Consequences & Mitigations
-- **Burst Vulnerability to Downstream Services:** If a bucket has capacity 100, an aggressive client can burst 100 requests in 10ms.
-  - *Mitigation:* We pair Token Bucket with short window refills (e.g., $10\text{ tokens / 1s}$ with burst capacity $15$, rather than $600\text{ tokens / 60s}$) or recommend Leaky Bucket specifically for asynchronous background queuing systems.
-- **Clock Skew:** GCRA and Token Bucket rely on monotonic or Unix epoch time.
-  - *Mitigation:* All Redis operations use Redis server time (`redis.call('TIME')`) or centralized synchronized gateway clocks using chrony/NTP to ensure skew remains $< 1\text{ ms}$.
-
+- Predictable memory: Memory usage scales linearly at roughly 144 bytes per key in Redis, so 10 million keys take around 2.2 GB.
+- Constant time evaluation: Both Token Bucket and GCRA run in O(1) arithmetic operations inside single Redis Lua executions.
+- Variable costs: Deducting multiple tokens for an expensive route requires only a single decrement parameter.
+- Downstream protection: If a bucket has a capacity of 100, a client can dump 100 calls in milliseconds. To protect fragile downstream services, I recommend using shorter refill intervals (such as 10 tokens per second with a burst of 15) rather than large minute-long windows.
+- Clock synchronization: Both algorithms depend on accurate time, so all Redis evaluations use redis.call('TIME') to avoid client clock drift.

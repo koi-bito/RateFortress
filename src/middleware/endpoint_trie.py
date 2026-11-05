@@ -1,9 +1,4 @@
-"""Endpoint Trie for hierarchical route prefix matching.
-
-Provides O(K) lookup where K is the number of path segments, rather than O(N * M)
-regex or string scans over N routes. Enables inherited rate limit rules, e.g.
-a rule on '/api/admin' automatically governs '/api/admin/users' and '/api/admin/settings'.
-"""
+"""Endpoint Trie for hierarchical route prefix matching."""
 
 from src.middleware.config import EndpointRule
 
@@ -35,12 +30,6 @@ class EndpointTrie:
         return cleaned.split("/")
 
     def insert(self, path: str, rule: EndpointRule) -> None:
-        """Inserts or updates a rate limiting rule at a given URL path.
-
-        Args:
-            path: Target route pattern (e.g. '/' or '/api/admin' or '/api/v1/auth').
-            rule: EndpointRule configuration instance.
-        """
         segments = self._split_path(path)
         node = self.root
 
@@ -53,11 +42,6 @@ class EndpointTrie:
         node.pattern = path
 
     def match_with_pattern(self, path: str) -> tuple[EndpointRule, str]:
-        """Finds the most specific rule and its matched pattern for path.
-
-        Returns:
-            Tuple of (EndpointRule, matched_pattern).
-        """
         segments = self._split_path(path)
         node = self.root
         best_rule = self.root.rule or self.default_rule
@@ -81,15 +65,5 @@ class EndpointTrie:
         return best_rule, best_pattern
 
     def match(self, path: str) -> EndpointRule:
-        """Finds the most specific (longest-prefix) rule matching the given path.
-
-        Falls back to ancestor rules or root default rule if no exact match exists.
-
-        Args:
-            path: Target HTTP request URL path.
-
-        Returns:
-            The most specific EndpointRule found.
-        """
         rule, _ = self.match_with_pattern(path)
         return rule

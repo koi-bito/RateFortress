@@ -1,4 +1,4 @@
-"""Integration tests for the RateFortress gRPC service (Day 94)."""
+"""Tests for the RateFortress gRPC service."""
 
 import grpc
 import pytest
@@ -23,7 +23,7 @@ def grpc_server_and_stub():
 
 
 def test_grpc_check_rate_limit_allows_then_blocks(grpc_server_and_stub):
-    """Validates that a client can burst up to limit and is throttled on overflow."""
+    """Check a client can burst up to limit and is throttled on overflow."""
     stub = grpc_server_and_stub
     client_id = "grpc_user_1"
     endpoint = "/api/test"  # base limit 10
@@ -56,7 +56,7 @@ def test_grpc_check_rate_limit_allows_then_blocks(grpc_server_and_stub):
 
 
 def test_grpc_gcra_algorithm_selection(grpc_server_and_stub):
-    """Validates GCRA algorithm execution over gRPC."""
+    """Check GCRA algorithm execution over gRPC."""
     stub = grpc_server_and_stub
     client_id = "grpc_gcra_user"
     endpoint = "/api/test"
@@ -85,7 +85,7 @@ def test_grpc_gcra_algorithm_selection(grpc_server_and_stub):
 
 
 def test_grpc_tier_multiplier(grpc_server_and_stub):
-    """Validates that Paid tier receives a 10x limit multiplier."""
+    """Check Paid tier receives a 10x limit multiplier."""
     stub = grpc_server_and_stub
     client_id = "grpc_paid_user"
     endpoint = "/api/test"
@@ -103,7 +103,7 @@ def test_grpc_tier_multiplier(grpc_server_and_stub):
 
 
 def test_grpc_get_quota(grpc_server_and_stub):
-    """Validates Quota inspection RPC."""
+    """Check Quota inspection RPC."""
     stub = grpc_server_and_stub
     req = ratefortress_pb2.QuotaRequest(
         client_id="new_user_quota",
@@ -127,7 +127,7 @@ def test_grpc_get_quota(grpc_server_and_stub):
     ],
 )
 def test_grpc_all_algorithms_supported(grpc_server_and_stub, algo):
-    """Validates that CheckRateLimit executes successfully across all 6 algorithms."""
+    """Check CheckRateLimit executes successfully across all 6 algorithms."""
     stub = grpc_server_and_stub
     req = ratefortress_pb2.RateLimitRequest(
         client_id=f"user_{algo}",

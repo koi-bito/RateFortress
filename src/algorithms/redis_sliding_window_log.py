@@ -1,10 +1,4 @@
-"""Redis-backed Sliding Window Log rate limiting algorithm using atomic Lua scripting.
-
-Uses Redis Sorted Sets (ZSET) where each member is a unique request identifier/timestamp
-and the score is the epoch timestamp (float). Executes pruning, cardinality checking,
-and request insertion in a single atomic Lua script to eliminate race conditions under
-high concurrent load across distributed systems.
-"""
+"""Redis-backed Sliding Window Log rate limiting algorithm using atomic Lua scripting."""
 
 import time
 import uuid
@@ -42,7 +36,6 @@ class RedisSlidingWindowLog:
         return f"sliding_log:{self.namespace}:{user_id}"
 
     def is_allowed(self, user_id: str) -> bool:
-        """Atomically evaluates whether user_id is permitted to perform a request."""
         key = self._key(user_id)
         now = time.time()
         member_id = f"{now}:{uuid.uuid4().hex[:8]}"
@@ -54,7 +47,6 @@ class RedisSlidingWindowLog:
         return bool(res[0])
 
     def remaining(self, user_id: str) -> int:
-        """Returns the remaining request quota in the active sliding window."""
         key = self._key(user_id)
         now = time.time()
         res = self._script(
@@ -64,11 +56,9 @@ class RedisSlidingWindowLog:
         return int(res[1])
 
     def get_remaining(self, user_id: str) -> int:
-        """Alias for `remaining`."""
         return self.remaining(user_id)
 
     def retry_after(self, user_id: str) -> int:
-        """Returns the seconds until the oldest request in the window expires."""
         key = self._key(user_id)
         now = time.time()
         res = self._script(
@@ -78,5 +68,4 @@ class RedisSlidingWindowLog:
         return int(res[2])
 
     def get_retry_after(self, user_id: str) -> int:
-        """Alias for `retry_after`."""
         return self.retry_after(user_id)

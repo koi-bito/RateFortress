@@ -1,68 +1,51 @@
-# RateFortress — Production Cloud Deployment Guide
+# RateFortress — Cloud Deployment Guide
 
-This guide details the deployment of the **RateFortress** distributed rate limiting gateway and API engine into production cloud environments.
-
----
-
-## 1. Cloud Architecture Overview
-
-In production, RateFortress runs as a containerized gateway fronting upstream services or operating as an edge rate-limiting middleware:
-1. **Containerized API Gateway:** Python 3.13-slim image running FastAPI with Uvicorn multi-worker concurrency.
-2. **Distributed Redis Backend:** Standalone Redis 7.2 or AWS ElastiCache cluster with `volatile-lru` eviction policy for non-blocking atomicity.
-3. **Telemetry & Observability:** Prometheus scrapes `/metrics` every 5 seconds, Loki aggregates structured JSON logs via Promtail, and OpenTelemetry exports distributed traces.
-4. **Health Checking:** Load balancers poll `/health` every 10–15 seconds to handle zero-downtime rolling deploys.
+These are the deployment steps I use to run RateFortress in cloud environments like Render, Railway, or a standalone Linux VM. This deployment was kept single-region by design.
 
 ---
 
-## 2. Option A: Zero-Config Deployment on Render.com
+## 1. Cloud Architecture
 
-RateFortress includes a declarative Infrastructure-as-Code blueprint in `render.yaml`.
-
-### Step-by-Step Instructions:
-1. Fork or push your `RateFortress` repository to GitHub.
-2. Sign in to [Render.com](https://render.com) and navigate to **Blueprints**.
-3. Click **New Blueprint Instance** and select your `RateFortress` repository.
-4. Render will parse `render.yaml` and provision:
-   - **RateFortress Web Service:** Builds directly from `Dockerfile`, exposes port 8000, and enables auto-deploy on `main` branch pushes.
-   - **Managed Redis Instance:** Provisions an isolated Redis database within the private VPC, auto-populating `REDIS_HOST` and `REDIS_PORT`.
-5. Click **Apply**. Once deployment completes, your live gateway is accessible at:
-   ```
-   https://ratefortress.onrender.com
-   ```
+In production, RateFortress runs as a containerized gateway in front of upstream services:
+1. API Gateway: Python 3.13-slim image running FastAPI with Uvicorn.
+2. Redis Backend: Redis 7.2 or a managed Redis instance for shared state and Lua script execution.
+3. Observability: Prometheus scraping /metrics, Promtail shipping JSON logs to Loki, and OpenTelemetry exporting traces.
+4. Health Checking: Load balancers polling /health to handle rolling updates.
 
 ---
 
-## 3. Option B: Deployment on Railway.app
+## 2. Option A: Deploying on Render.com
 
-1. Install the Railway CLI or connect via the [Railway Dashboard](https://railway.app).
-2. Click **New Project** → **Deploy from GitHub repo** → select `RateFortress`.
-3. Click **Add Service** → **Database** → **Redis**.
-4. In the `ratefortress` service settings:
-   - Railway auto-detects `railway.json` and builds from `Dockerfile`.
-   - Add environment variables:
-     - `RATEFORTRESS_BACKEND`: `redis_async`
-     - `REDIS_HOST`: `${{Redis.REDISHOST}}`
-     - `REDIS_PORT`: `${{Redis.REDISPORT}}`
-     - `REDIS_PASSWORD`: `${{Redis.REDISPASSWORD}}`
-     - `USE_FAKE_REDIS`: `false`
-     - `LOG_FORMAT`: `json`
-5. Railway provides an automatic HTTPS subdomain (e.g., `ratefortress-production.up.railway.app`).
+I included a blueprint file in `render.yaml`.
+
+Steps:
+1. Push the repository to GitHub.
+2. Go to Render and create a New Blueprint Instance selecting this repository.
+3. Render reads `render.yaml` and provisions both the Dockerfile web service on port 8000 and a private Redis instance.
+4. Apply changes and wait for the build to finish.
 
 ---
 
-## 4. Option C: Production Deployment on AWS EC2
+## 3. Option B: Deploying on Railway.app
 
-For enterprise deployments requiring dedicated compute, custom VPCs, or AWS ElastiCache:
+1. Create a new project on Railway from the GitHub repository.
+2. Add a Redis database service to the project.
+3. In service settings, Railway picks up `railway.json` and builds the Dockerfile.
+4. Set environment variables for Redis (`RATEFORTRESS_BACKEND=redis_async`, `REDIS_HOST`, `REDIS_PORT`, `REDIS_PASSWORD`, and `LOG_FORMAT=json`).
+5. Railway assigns an HTTPS domain automatically.
 
-### 1. Launch EC2 Instance
-- **AMI:** Ubuntu Server 24.04 LTS (HVM), SSD Volume Type
-- **Instance Type:** `t3.medium` or `c6i.large` (2-4 vCPUs, 4-8 GB RAM)
-- **Security Group:**
-  - Inbound HTTP (80) & HTTPS (443) from `0.0.0.0/0`
-  - Inbound SSH (22) from your IP only
-  - Internal VPC traffic only on port 6379 (Redis)
+---
 
-### 2. Install Docker & Docker Compose
+## 4. Option C: Running on an Ubuntu VM (AWS EC2)
+
+For running directly on a Linux VM:
+
+### 1. Launch Instance
+- OS: Ubuntu Server 24.04 LTS
+- Size: t3.medium or c6i.large (2 to 4 vCPUs, 4 GB RAM)
+- Ports: Inbound 80 and 443 open to traffic, port 22 open only to your IP, port 6379 restricted to localhost.
+
+### 2. Install Docker
 ```bash
 sudo apt update && sudo apt install -y ca-certificates curl gnupg
 sudo install -m 0755 -d /etc/apt/keyrings
@@ -78,16 +61,14 @@ sudo apt update && sudo apt install -y docker-ce docker-ce-cli containerd.io doc
 sudo usermod -aG docker ubuntu
 ```
 
-### 3. Clone Repository and Start Service
+### 3. Clone and Start Stack
 ```bash
-git clone https://github.com/<your-username>/RateFortress.git /opt/ratefortress
+git clone https://github.com/koi-bito/RateFortress.git /opt/ratefortress
 cd /opt/ratefortress
-
-# Start entire stack (Gateway + Redis + Prometheus + Grafana + Loki)
 sudo docker compose up -d
 ```
 
-### 4. Configure Systemd Service for Auto-Restart on Host Reboot
+### 4. Systemd Auto-Restart
 Create `/etc/systemd/system/ratefortress.service`:
 ```ini
 [Unit]
@@ -106,16 +87,18 @@ TimeoutStartSec=0
 [Install]
 WantedBy=multi-user.target
 ```
-Enable and start the service:
+
+Enable it:
 ```bash
 sudo systemctl daemon-reload
 sudo systemctl enable ratefortress.service
 ```
 
-### 5. Nginx Reverse Proxy with Let's Encrypt SSL/TLS
+### 5. Nginx Reverse Proxy with SSL
 ```bash
 sudo apt install -y nginx certbot python3-certbot-nginx
 ```
+
 Configure `/etc/nginx/sites-available/ratefortress`:
 ```nginx
 server {
@@ -130,7 +113,8 @@ server {
     }
 }
 ```
-Obtain free SSL certificate:
+
+Enable site and generate certificate:
 ```bash
 sudo ln -s /etc/nginx/sites-available/ratefortress /etc/nginx/sites-enabled/
 sudo certbot --nginx -d ratefortress.yourdomain.com
@@ -152,11 +136,10 @@ sudo certbot --nginx -d ratefortress.yourdomain.com
 
 ---
 
-## 6. Smoke Testing the Live Deployment
+## 6. Smoke Testing the Deployment
 
-Once deployed, verify your public endpoint using the provided verification script:
+Once deployed, I test the live instance with the smoke test script:
 ```bash
 python scripts/smoke_test_deployment.py --url https://your-ratefortress-domain.com
 ```
-All endpoints (`/health`, `/metrics`, `/compare`, and rate-limiting enforcement on `/api/test`) will be verified in under 5 seconds.
-
+It hits `/health`, `/metrics`, `/compare`, and `/api/test` to check that rate limits and headers are behaving properly.

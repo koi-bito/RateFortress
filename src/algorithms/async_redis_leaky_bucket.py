@@ -1,8 +1,4 @@
-"""Asynchronous Redis-backed Leaky Bucket rate limiter using atomic Lua scripting.
-
-Enforces uniform egress rates and buffer caps using non-blocking Lua execution
-over redis.asyncio.
-"""
+"""Asynchronous Redis-backed Leaky Bucket rate limiter using atomic Lua scripting."""
 
 import time
 from pathlib import Path
@@ -39,7 +35,6 @@ class AsyncRedisLeakyBucket:
         return f"leaky_bucket:{self.namespace}:{user_id}"
 
     async def is_allowed(self, user_id: str, cost: int = 1) -> bool:
-        """Evaluates whether user_id can enqueue a request asynchronously."""
         if cost <= 0:
             raise ValueError("Requested cost must be positive.")
 
@@ -52,7 +47,6 @@ class AsyncRedisLeakyBucket:
         return bool(res[0])
 
     async def remaining(self, user_id: str) -> int:
-        """Returns the available buffer capacity without enqueuing a request."""
         key = self._key(user_id)
         now = time.time()
         res = await self._script(
@@ -65,7 +59,6 @@ class AsyncRedisLeakyBucket:
         return await self.remaining(user_id)
 
     async def retry_after(self, user_id: str) -> int:
-        """Returns the seconds until the queue leaks enough to admit at least 1 request."""
         key = self._key(user_id)
         now = time.time()
         res = await self._script(

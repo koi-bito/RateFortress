@@ -1,82 +1,72 @@
-# RateFortress — Demo Video Script, Screen Walkthrough & Public Launch
+# RateFortress — Demo Video Script & Walkthrough Notes
 
-This document provides the production demo script, screen-recording walkthrough, and public launch write-ups for **RateFortress**.
+These are my speaking notes for recording a quick 2.5-minute video walkthrough of RateFortress.
 
 ---
 
 ## 1. Video Demo Script (2.5 Minutes)
 
-### [0:00 – 0:30] Introduction & High-Level Architecture
-- **Visual:** Display `docs/architecture.svg` on screen.
-- **Spoken Script:**
-  > *"Hi, I'm showcasing RateFortress — a production-grade distributed rate limiting engine and API gateway built from first principles in Python and Redis.
-  >
-  > Most rate limiters you find in production are simple fixed-window wrappers that suffer from severe boundary bursts and concurrency race conditions. RateFortress implements five core rate-limiting algorithms from scratch — Fixed Window, Sliding Window Log, Sliding Window Counter, Token Bucket, and Leaky Bucket.
-  >
-  > It exposes them via pluggable FastAPI middleware, backed by Redis with atomic Lua scripts for strict zero-race condition concurrency, fully observable with Prometheus, Grafana, Loki, and OpenTelemetry, and deployed with zero-downtime Blue-Green CI/CD pipelines."*
+### [0:00 to 0:30] Introduction & High-Level Architecture
+- Visual: Show docs/architecture.svg.
+- Spoken Script:
+  "Hi, I am showing RateFortress, a distributed rate limiting engine and gateway I built in Python and Redis.
+
+  Most rate limiters in tutorials are simple fixed-window counters that suffer from boundary bursts and race conditions. I implemented five core algorithms from scratch: Fixed Window, Sliding Window Log, Sliding Window Counter, Token Bucket, and Leaky Bucket.
+
+  I exposed them through FastAPI middleware backed by Redis with atomic Lua scripts to prevent race conditions, wired up Prometheus and Grafana dashboards, and added tests for zero-downtime cutovers."
 
 ---
 
-### [0:30 – 1:15] The "Wow Factor": Live Algorithm Comparison Engine
-- **Visual:** Open browser to `http://localhost:8000/compare` (or the live URL).
-- **Spoken Script:**
-  > *"To prove algorithmic tradeoffs empirically rather than just in theory, I built an interactive Algorithm Comparison Engine accessible at `/compare`.
-  >
-  > Here, we generate identical synthetic traffic across all five algorithms simultaneously using an isolated virtual clock with microsecond-level accuracy.
-  >
-  > Watch what happens when we switch the traffic pattern from 'Uniform' to 'Skewed' where 20% of users fire rapid bursts.
-  >
-  > Token Bucket allows the bursty clients through with high admission rates because it accumulates credit during idle periods. In contrast, Leaky Bucket strictly penalizes the bursty clients, dropping overflow packets to guarantee smooth, constant downstream outflow. Sliding Window Log and Counter enforce strict rolling quotas with zero boundary leakage."*
+### [0:30 to 1:15] Algorithm Comparison Engine
+- Visual: Open browser to http://localhost:8000/compare.
+- Spoken Script:
+  "To compare these algorithms under identical conditions, I built an interactive endpoint at /compare.
+
+  It fires identical synthetic traffic across all algorithms using an isolated virtual clock.
+
+  When I change the traffic pattern from uniform to skewed, where 20% of users send rapid bursts, Token Bucket lets the bursty clients through because it accumulates tokens during idle periods. Leaky Bucket drops the overflow to force a smooth, steady outflow. Sliding Window Counter enforces strict rolling quotas without leaking across boundaries."
 
 ---
 
-### [1:15 – 1:55] Live Observability & Load Testing Burst
-- **Visual:** Split screen: Terminal running Locust/k6 load test on left; Grafana Live Dashboard on right (`http://localhost:3000`).
-- **Spoken Script:**
-  > *"Here's the observability stack in action. As I fire a 500-user concurrent traffic surge through Locust:
-  >
-  > Notice Panel 1 immediately separates allowed nominal traffic from HTTP 429 throttled spikes.
-  >
-  > Panel 2 tracks sub-millisecond p95 and p99 latency percentiles, while Panel 4 isolates the rate-limiter decision overhead — proving our Redis atomic Lua scripts evaluate each check in under 150 microseconds.
-  >
-  > All logs are formatted as structured JSON, shipped via Promtail into Loki, and instrumented with OpenTelemetry distributed tracing spans."*
+### [1:15 to 1:55] Observability & Load Testing
+- Visual: Split screen with terminal running Locust on the left and Grafana on the right.
+- Spoken Script:
+  "Here is the observability setup under a 500-user concurrent load test in Locust.
+
+  The first panel separates allowed traffic from 429 throttled requests.
+
+  The latency panel tracks p95 and p99 times, while another panel isolates the rate limiter decision overhead, showing that the Redis Lua scripts complete each evaluation in under 150 microseconds.
+
+  Logs are formatted as structured JSON for Loki, and OpenTelemetry traces capture latency across middleware spans."
 
 ---
 
-### [1:55 – 2:30] Zero-Downtime Deployment & Incident Rollback
-- **Visual:** Show GitHub Actions green test matrix badge and run `scripts/blue_green_deploy.py`.
-- **Spoken Script:**
-  > *"RateFortress is containerized with Docker, deployed to cloud infrastructure with Infrastructure-as-Code blueprints, and tested across Python 3.11, 3.12, and 3.13 against live Redis service containers.
-  >
-  > Our automated Blue-Green deployment controller demonstrates seamless traffic handovers: 100 concurrent requests dispatched across an active cutover yield exactly zero dropped packets. And if an anomaly is detected, our documented runbook provides instant sub-millisecond rollback.
-  >
-  > RateFortress is open-source on GitHub with comprehensive benchmarks, daily engineering logs, and architectural decision records."*
+### [1:55 to 2:30] Deployment & Rollback Drill
+- Visual: Show passing GitHub Actions workflows and run scripts/blue_green_deploy.py.
+- Spoken Script:
+  "The application is packaged with Docker, configured with blueprints for cloud hosting, and tested across Python 3.11, 3.12, and 3.13 against a live Redis service.
+
+  I also tested cutovers between blue and green instances so traffic switches over without dropping requests mid-flight, and wrote down an incident runbook for rollbacks.
+
+  The whole project is open source on GitHub with benchmarks and daily logs."
 
 ---
 
-## 2. LinkedIn & Technical Community Launch Post
+## 2. Project Summary Post Draft (LinkedIn & Technical Community Launch Post)
 
-### Hook & Story:
-```markdown
-🚀 Excited to open-source RateFortress — a production-grade distributed rate limiting engine built from first principles!
+I built RateFortress from scratch to explore distributed rate limiting without relying on third-party black boxes.
 
-Most tutorials implement rate limiting with a simple Redis INCR counter. But in real-world distributed systems, naive rate limiters break down in subtle ways:
-1. Window Boundary Bursts: A fixed window counter allows up to 2x the nominal limit across window reset boundaries (e.g. 100 requests at 00:59, and another 100 at 01:01).
-2. Check-and-Set Race Conditions: Under a 50-thread concurrent surge, separate Redis ZCARD and ZADD calls in Sliding Window Logs over-admitted up to 25 requests against a strict limit of 10!
+Most basic implementations use simple Redis INCR calls, which run into two common issues:
+1. Window boundary bursts: Fixed window counters allow double the quota if requests land right across the reset boundary.
+2. Check-and-set race conditions: Under concurrency, separate read and write steps let excess requests pass before counts update.
 
-To solve this, I built RateFortress from scratch:
-🛡️ 5 Core Algorithms: Fixed Window, Sliding Window Log, Sliding Window Counter, Token Bucket, and Leaky Bucket.
-⚡ Atomic Lua Scripting: Consolidated eviction, bounds checking, and token math into atomic Lua scripts in Redis — achieving 0% over-admission under heavy concurrent stress.
-⚖️ Algorithm Comparison Engine: A live `/compare` endpoint (JSON & Jinja2 HTML) that benchmarks all 5 algorithms simultaneously under uniform vs. bursty traffic patterns.
-📊 Full-Stack Observability: Prometheus scrape telemetry, live Grafana dashboards, Loki structured JSON logging, and OpenTelemetry tracing.
-🔄 Blue-Green CI/CD: Automated multi-version test matrix in GitHub Actions, Docker Compose orchestration, and zero-downtime cutover with sub-millisecond rollback runbooks.
+To address these, I built:
+- Core algorithms: Fixed Window, Sliding Window Log, Sliding Window Counter, Token Bucket, and Leaky Bucket.
+- Atomic Lua scripts: Moving the check and update into Redis eliminated race conditions under high concurrency.
+- Comparison engine: A live /compare endpoint to test how each algorithm handles steady versus bursty traffic.
+- Observability: Prometheus metrics, Grafana dashboards, Loki structured logging, and OpenTelemetry tracing.
+- Operational testing: Automated tests in GitHub Actions and zero-downtime cutover scripts.
 
-Tested to 43,000+ req/s with sub-millisecond decision latency and 140 automated tests.
-
-Check out the code, architecture diagrams, and benchmark write-up:
-🔗 GitHub: https://github.com/koi-bito/RateFortress
-📊 Empirical Benchmarks: https://github.com/koi-bito/RateFortress/blob/main/BENCHMARKS.md
-
-#Python #FastAPI #Redis #DistributedSystems #SoftwareEngineering #DevOps #SystemDesign #OpenSource
-```
-
+The benchmarks and daily logs are in the repository:
+GitHub: https://github.com/koi-bito/RateFortress
+Benchmark Report: https://github.com/koi-bito/RateFortress/blob/main/BENCHMARKS.md

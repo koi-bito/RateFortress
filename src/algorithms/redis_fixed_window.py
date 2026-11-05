@@ -1,9 +1,4 @@
-"""Redis-backed Fixed Window Counter rate limiting algorithm.
-
-Stores per-client, per-window counters directly in Redis using atomic INCR operations,
-allowing multiple concurrent application server processes or containers to share state
-without race conditions or localized split-brain counters.
-"""
+"""Redis-backed Fixed Window Counter rate limiting algorithm."""
 
 import time
 from typing import Any
@@ -36,7 +31,6 @@ class RedisFixedWindow:
         return f"fixed_window:{self.namespace}:{user_id}:{current_window}"
 
     def is_allowed(self, user_id: str) -> bool:
-        """Determines if a request from user_id is permitted in the current window."""
         now = time.time()
         current_window, _ = self._get_window_info(now)
         key = self._key(user_id, current_window)
@@ -50,7 +44,6 @@ class RedisFixedWindow:
         return count <= self.limit
 
     def remaining(self, user_id: str) -> int:
-        """Returns the remaining request quota for user_id in the active window."""
         current_window, _ = self._get_window_info()
         key = self._key(user_id, current_window)
         val = self.r.get(key)
@@ -58,6 +51,5 @@ class RedisFixedWindow:
         return max(0, self.limit - current_count)
 
     def retry_after(self, user_id: str) -> int:
-        """Returns the number of seconds until the current window resets."""
         _, retry_seconds = self._get_window_info()
         return retry_seconds

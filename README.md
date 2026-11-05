@@ -6,8 +6,7 @@
 [![Redis: 7.2](https://img.shields.io/badge/redis-7.2--alpine-red.svg)](https://redis.io/)
 [![Docker](https://img.shields.io/badge/docker-compose%20ready-blue.svg)](https://www.docker.com/)
 
-> **A production-grade, high-performance distributed rate limiting engine and API gateway built from first principles in Python and Redis.**
-> Benchmarked to 43,000+ req/s, verified race-condition-free under concurrent stress, fully observable with Prometheus/Grafana/Loki/OpenTelemetry, and deployed with zero-downtime Blue-Green CI/CD.
+I built RateFortress to understand how rate limiting works at the systems level, from basic Python logic up to distributed Redis backends. I wanted to see the race conditions, memory footprints, and latency differences by writing and testing each algorithm myself. It provides rate limiting algorithms with FastAPI middleware, Redis Lua scripts, and observability tools.
 
 ---
 
@@ -19,34 +18,31 @@
 
 ## 💡 What It Does & Key Capabilities
 
-- **6 Core Algorithms Built From Scratch:** Implements Fixed Window Counter, Sliding Window Log, Sliding Window Counter, Token Bucket, Leaky Bucket, and GCRA (Generic Cell Rate Algorithm) in pure Python and Redis Lua.
-- **Dual Transport (REST & gRPC):** Exposes rate limiting both as FastAPI ASGI middleware and as a high-throughput binary gRPC microservice (`proto/ratefortress.proto`).
-- **Atomic Concurrency (Zero Race Conditions):** Consolidated bounds checking, counter increments, and timestamp trimming into atomic Lua scripts (`EVALSHA`) in Redis, eliminating check-and-set concurrency leaks (verified under 50-thread concurrent stress).
-- **FastAPI Middleware Layer:** Pluggable ASGI middleware supporting hierarchical route rules via an `EndpointTrie`, multi-dimensional compound rate limiting (`key:route:ip`), trusted proxy CIDR anti-spoofing, tier multipliers (Free 1x, Paid 10x, Enterprise 50x), and RFC-compliant rate limit headers (`X-RateLimit-Limit`, `Remaining`, `Reset`, `Retry-After`).
-- **Load Shedding & Priority Queuing:** Priority request queue (min-heap) under high concurrency that sheds free/anonymous traffic fast with HTTP 503 (`Retry-After: 1`), protecting ASGI event loop capacity for paid and enterprise traffic.
-- **Production Hardening & Cold-Start Resilience:** Separates liveness (`/health`) from dependency-verified readiness (`/health/ready`). Traps `SIGTERM` / `SIGINT` signals, immediately rejecting new incoming traffic with HTTP 503 while draining in-flight requests cleanly within a bounded grace period (15s orchestrator SLA).
-- **Multi-Tenant Admin Dashboard & API (`/admin` & `/api/v1/admin/*`):** Full-featured administrative control plane for issuing, updating, and revoking API keys, initiating zero-downtime key rotation with dual-validity grace periods, persistent storage across Redis hashes, and an interactive live rate-limit test console.
-- **Circuit Breaker Fail-Open Resilience:** Protects downstream APIs from Redis outages. Automatically trips open after consecutive timeouts, failing open to preserve service availability.
-- **Algorithm Comparison Engine (`/compare`):** An interactive endpoint (JSON & responsive Jinja2 HTML) evaluating synthetic traffic across all algorithms simultaneously with microsecond latency instrumentation and empirical fairness analysis (Uniform vs. Skewed).
-- **Full Observability Stack:** Real-time Prometheus metrics (`/metrics`), live provisioned Grafana dashboards, structured JSON logging for Loki/Promtail, and OpenTelemetry distributed tracing spans.
-- **Zero-Downtime Blue-Green Deployments:** Automated cutover controller with atomic pointer switches, request draining, and sub-millisecond emergency rollback runbooks.
+- I implemented six algorithms from scratch in Python and Redis Lua: Fixed Window Counter, Sliding Window Log, Sliding Window Counter, Token Bucket, Leaky Bucket, and GCRA.
+- I wrote atomic Redis Lua scripts for the distributed versions so concurrent requests cannot race between reading and writing counters.
+- I exposed the logic through both FastAPI ASGI middleware and a gRPC microservice.
+- I added a route trie for prefix matching, API key tiers with multipliers, compound keys combining IP and path, and standard HTTP rate limit headers.
+- I built a priority queue with load shedding to drop free traffic early with HTTP 503 when the server gets saturated, protecting paid requests.
+- I set up health check endpoints, a circuit breaker that fails open when Redis is down, and signal handling for SIGTERM and SIGINT to drain active requests.
+- I created an admin dashboard at /admin to manage keys and a comparison endpoint at /compare to evaluate all algorithms side by side.
+- I wired up Prometheus metrics, Loki logging, and OpenTelemetry tracing so I can inspect latency attribution.
 
 ---
 
 ## 📊 Empirical Benchmarks & Performance Matrix
 
-Tested via `benchmarks/run_redis_benchmark.py` and concurrent stress harnesses:
+I benchmarked these implementations against a local Redis instance using benchmarks/run_redis_benchmark.py and a 50-thread concurrent test harness.
 
 | Algorithm Implementation | Storage Backend | Atomicity Model | Throughput (req/s) | 50-Thread Concurrent Stress (Limit=10) | Over-Admission Leak? | Memory Footprint (Per User) |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **Fixed Window Counter** | Redis (`INCR` + `EXPIRE`) | Redis Atomic `INCR` | **43,334 req/s** | 10 Allowed / 40 Blocked | **0% (Zero)** | $O(1)$ (1 counter) |
-| **Sliding Window Counter** | Redis Key-Value (`GET` + `INCR`) | **Atomic Lua Script** | **7,213 req/s** | 10 Allowed / 40 Blocked | **0% (Zero)** | $O(1)$ (2 counters) |
-| **GCRA (Cell Rate)** | Redis String (`GET`/`SET`) | **Atomic Lua Script** | **6,695 req/s** | 10 Allowed / 40 Blocked | **0% (Zero)** | $O(1)$ (~32 bytes TAT) |
-| **Token Bucket** | Redis Hash (`HMGET`/`HMSET`) | **Atomic Lua Script** | **6,533 req/s** | 10 Allowed / 40 Blocked | **0% (Zero)** | $O(1)$ (tokens + time) |
-| **Leaky Bucket** | Redis Hash (`HMGET`/`HMSET`) | **Atomic Lua Script** | **6,310 req/s** | 10 Allowed / 40 Blocked | **0% (Zero)** | $O(1)$ (queue depth) |
-| **Sliding Window Log** | Redis Sorted Set (`ZSET`) | **Atomic Lua Script** | **5,858 req/s** | 10 Allowed / 40 Blocked | **0% (Zero)** | $O(N)$ (timestamps) |
+| Fixed Window Counter | Redis (INCR + EXPIRE) | Redis Atomic INCR | 43,334 req/s | 10 Allowed / 40 Blocked | 0% (Zero) | O(1) (1 counter) |
+| Sliding Window Counter | Redis Key-Value (GET + INCR) | Atomic Lua Script | 7,213 req/s | 10 Allowed / 40 Blocked | 0% (Zero) | O(1) (2 counters) |
+| GCRA (Cell Rate) | Redis String (GET/SET) | Atomic Lua Script | 6,695 req/s | 10 Allowed / 40 Blocked | 0% (Zero) | O(1) (~32 bytes TAT) |
+| Token Bucket | Redis Hash (HMGET/HMSET) | Atomic Lua Script | 6,533 req/s | 10 Allowed / 40 Blocked | 0% (Zero) | O(1) (tokens + time) |
+| Leaky Bucket | Redis Hash (HMGET/HMSET) | Atomic Lua Script | 6,310 req/s | 10 Allowed / 40 Blocked | 0% (Zero) | O(1) (queue depth) |
+| Sliding Window Log | Redis Sorted Set (ZSET) | Atomic Lua Script | 5,858 req/s | 10 Allowed / 40 Blocked | 0% (Zero) | O(N) (timestamps) |
 
-*Full load test, spike, soak, and memory profiling results documented in [BENCHMARKS.md](BENCHMARKS.md).*
+Full load test, spike, soak, and memory profiling results are in [BENCHMARKS.md](BENCHMARKS.md).
 
 ---
 
@@ -55,51 +51,35 @@ Tested via `benchmarks/run_redis_benchmark.py` and concurrent stress harnesses:
 ```
 ratefortress/
 ├── src/
-│   ├── algorithms/     # Pure algorithm implementations (Fixed, Sliding Log, Sliding Counter, Token, Leaky, GCRA)
+│   ├── algorithms/     # Core algorithms (Fixed, Sliding Log, Sliding Counter, Token, Leaky, GCRA)
 │   ├── middleware/     # FastAPI middleware, EndpointTrie, CircuitBreaker, key management
-│   ├── api/            # API gateway routing & /compare benchmark engine
-│   ├── grpc_service/   # High-throughput gRPC Protobuf microservice implementation
-│   ├── monitoring/     # Prometheus metrics, structured JSON logging, OpenTelemetry tracing
-│   └── storage/        # Redis connection pools, Lua scripts (atomic EVALSHA)
-├── proto/              # Protocol Buffers definitions (ratefortress.proto)
-├── templates/          # Jinja2 comparison dashboard & Admin UI (templates/admin.html)
-├── tests/              # 211 automated tests (unit, concurrency, property, integration)
-├── benchmarks/         # Micro-benchmarking harness & boundary burst reproducers
-├── loadtests/          # Locust & k6 distributed load, spike & soak testing scripts
-├── monitoring/         # Grafana dashboard provisioning, alert rules, Promtail & Prometheus configs
-├── docs/               # System design specs, Runbooks, ADRs, and Architecture diagrams
-│   ├── capacity_planning.md        # 1M req/s global capacity planning & Redis cluster sizing
-│   ├── mock_interview_single_region.md # Single-region gateway mock interview whiteboarding script
-│   ├── mock_interview_multi_region.md  # Multi-region global topology & batched token leasing
-│   ├── ADR-001-algorithm-choice.md # Michael Nygard ADR defending Token Bucket & GCRA
-│   ├── redteam_report.md           # Red team adversary simulation, header spoofing & abuse report
-│   ├── comparative_benchmark_article.md # Comprehensive systems publication & benchmark report
-│   ├── scaling.md                  # Redis Cluster hash slots & multi-region scaling plan
-│   ├── package_guide.md            # Standalone pip package integration guide
-│   ├── peer_review.md              # Architectural peer review & quality checklist
-│   ├── capstone_deep_dive_script.md # 15-minute senior engineering walkthrough script
-│   ├── architecture.svg            # Scalable system architecture diagram
-│   ├── tradeoffs.md                # Cross-algorithm tradeoff matrix
-│   ├── runbook.md                  # Production incident response & rollback runbook
-│   ├── cloud_deployment_guide.md   # Render, Railway & AWS EC2 deployment guide
-│   ├── demo_script_and_walkthrough.md # 2.5-minute video demo script & launch post
-│   └── interview_prep_and_defense.md  # System design mock interview questions & answers
-├── render.yaml         # Render Infrastructure-as-Code Blueprint
-├── railway.json        # Railway deployment configuration
-├── docker-compose.yml  # Full-stack local orchestration (App + Redis + Prometheus + Grafana + Loki + Promtail)
-├── Dockerfile          # Hardened Python 3.13-slim image with healthchecks
+│   ├── api/            # Gateway routes, admin endpoints, and /compare engine
+│   ├── grpc_service/   # gRPC service implementation
+│   ├── monitoring/     # Prometheus metrics, JSON logging, OpenTelemetry tracing
+│   └── storage/        # Redis connection pools and atomic Lua scripts
+├── proto/              # Protocol Buffers definitions
+├── templates/          # HTML templates for comparison and admin dashboard
+├── tests/              # 211 automated tests covering algorithms, concurrency, and routes
+├── benchmarks/         # Benchmark scripts and boundary reproducers
+├── loadtests/          # Locust and k6 load testing scripts
+├── monitoring/         # Grafana dashboard provisioning, Prometheus, and Promtail configs
+├── docs/               # System design notes, runbooks, and architectural docs
+├── render.yaml         # Render deployment config
+├── railway.json        # Railway deployment config
+├── docker-compose.yml  # Local stack orchestration
+├── Dockerfile          # Python 3.13 image definition
 ├── requirements.txt    # Project dependencies
-├── LEARNINGS.md        # Comprehensive 143-day daily engineering log
-├── BENCHMARKS.md       # Comparative performance & stress test data
-└── building_plan.md    # 29-week engineering roadmap
+├── LEARNINGS.md        # Daily engineering log
+├── BENCHMARKS.md       # Benchmark results and analysis
+└── building_plan.md    # Development plan and milestone log
 ```
 
 ---
 
 ## 🚦 Status & Milestones
 
-- **Current Status:** **Production-Grade Gateway, Hardening & Capstone Complete (Days 1–143)** 🎉
-- **Test Suite Status:** **211 Automated Tests Passing (Zero Failures)**
+- Current Status: Complete — Days 1 to 143.
+- Test Suite Status: 211 automated tests passing.
 
 ---
 
@@ -110,11 +90,11 @@ ratefortress/
 ```bash
 docker-compose up -d
 ```
-- **RateFortress API Gateway:** `http://localhost:8000`
-- **Algorithm Comparison Dashboard:** `http://localhost:8000/compare`
-- **Prometheus Telemetry:** `http://localhost:9090`
-- **Grafana Live Dashboards:** `http://localhost:3000` (User: `admin` / Password: `admin`)
-- **Loki Log Aggregation:** `http://localhost:3100`
+- RateFortress API Gateway: `http://localhost:8000`
+- Algorithm Comparison Dashboard: `http://localhost:8000/compare`
+- Prometheus Telemetry: `http://localhost:9090`
+- Grafana Live Dashboards: `http://localhost:3000` (User: `admin` / Password: `admin`)
+- Loki Log Aggregation: `http://localhost:3100`
 
 ### 2. Local Python Environment Setup
 
@@ -147,7 +127,7 @@ uvicorn src.api.main:app --port 8000
 curl "http://localhost:8000/compare?users=100&requests_per_user=50&window=10&pattern=skewed"
 
 # Web Browser Interactive Dashboard
-# Open http://localhost:8000/compare in any browser to view live comparative charts & tradeoff tables!
+# Open http://localhost:8000/compare in any browser to view comparative charts and tables.
 ```
 
 ### 5. Run Live Deployment Smoke Test
@@ -164,20 +144,15 @@ python scripts/blue_green_deploy.py --requests 100
 
 ---
 
-## 🎯 Resume Bullet Points
+## 🎯 What This Project Demonstrates (Resume Bullet Points)
 
-### For Backend / Systems Software Engineers:
-> *Built and open-sourced **RateFortress**, a distributed rate limiting engine in Python and Redis implementing 5 algorithms (Token Bucket, Leaky Bucket, Sliding Window Log/Counter, Fixed Window); authored atomic Lua scripts to eliminate check-and-set concurrency race conditions under 50-thread stress tests (0% over-admission), benchmarked to 43,000+ req/s, and integrated fail-open circuit breakers.*
-
-### For Platform / Infrastructure / DevOps Engineers:
-> *Architected an observable API rate-limiting gateway in FastAPI with Prometheus metrics, live Grafana dashboards, Loki structured JSON logging, and OpenTelemetry tracing; orchestrated multi-container stacks via Docker Compose, configured multi-version GitHub Actions CI/CD with live Redis service containers, and authored automated zero-downtime Blue-Green deployment and rollback runbooks.*
+This project shows that I can design and build backend systems from first principles without relying on high-level abstractions. I wrote the core data structures and rate limiters myself, diagnosed and fixed multi-threaded race conditions using Redis Lua scripts, and wired everything into an ASGI gateway with load shedding and circuit breaking. I also set up metrics, tracing, structured logs, and Docker environments, so I know how these pieces behave under real load.
 
 ---
 
-## ⚠️ Known Limitations & Future Roadmap
+## ⚠️ Known Limitations
 
-- **Single-Region Redis Cluster:** Current distributed state assumes single-datacenter Redis. Multi-region cross-continent synchronization will be introduced in Weeks 16–20 using Redis CRDTs and regional quota partitioning.
-- **Polyglot Performance Lab:** Upcoming Week 26 roadmap includes a high-throughput Go port (`RateFortress-Go`) for microsecond-critical edge proxy deployments.
+This implementation is intentionally scoped to a single-region deployment. Multi-datacenter quota synchronization across global regions and production traffic replay datasets were kept out of scope to focus on core rate-limiting algorithms, Redis Lua atomicity, and local gateway latency.
 
 ---
 
@@ -190,4 +165,4 @@ python scripts/blue_green_deploy.py --requests 100
 - [Production Cloud Deployment Guide](docs/cloud_deployment_guide.md)
 - [Incident Response & Rollback Runbook](docs/runbook.md)
 - [Empirical Benchmarks & Concurrency Analysis](BENCHMARKS.md)
-- [Daily Engineering Log (Days 1–86)](LEARNINGS.md)
+- [Daily Engineering Log](LEARNINGS.md)

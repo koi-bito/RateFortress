@@ -1,103 +1,71 @@
-# RateFortress — System Design Mock Interview Guide & Defense
+# RateFortress — System Design Interview Guide & Defense
 
-This guide provides structured, battle-tested answers to the most common system design and distributed systems interview questions for **RateFortress**, including capacity estimation flashcards, single-region and multi-region architectural trade-offs, and security defenses.
+These are my preparation notes for discussing RateFortress in system design interviews, covering capacity sizing, architectural trade-offs, and failure recovery.
 
 ---
 
 ## 1. 60-Second Elevator Pitch
 
-### "Walk me through this project."
-> *"RateFortress is a production-grade distributed rate limiting engine and API gateway built from first principles in Python and Redis.
->
-> In high-scale architectures, rate limiters protect downstream databases from cascading failures and enforce multi-tenant API tiers. However, most off-the-shelf implementations either suffer from the 2x window boundary burst problem, consume excessive memory at scale, or succumb to check-and-set race conditions under concurrent load.
->
-> I built RateFortress to solve these challenges directly. It implements six distinct algorithms—Fixed Window, Sliding Window Log, Sliding Window Counter, Token Bucket, Leaky Bucket, and GCRA (Generic Cell Rate Algorithm)—backed by Redis with atomic Lua scripts. It features hierarchical route matching via an Endpoint Trie, circuit breaker fail-open resilience, trusted proxy CIDR validation, behavioral bot analysis, a live `/compare` benchmarking engine, and complete observability via Prometheus, Grafana, Loki, and OpenTelemetry.
->
-> In local benchmarks, the engine achieves over 3.3 million requests/second in pure Python and 6,700 requests/second on Redis, with verified 0% over-admission under concurrent thread stress tests."*
+"RateFortress is a distributed rate limiting engine and API gateway I built in Python and Redis.
+
+In real systems, rate limiters protect databases from cascading failures and enforce customer quotas. Most simple implementations suffer from boundary burst leaks, consume excessive memory, or have race conditions under concurrency.
+
+I built RateFortress to address those issues directly. It implements six algorithms (Fixed Window, Sliding Window Log, Sliding Window Counter, Token Bucket, Leaky Bucket, and GCRA) backed by Redis Lua scripts. It also includes endpoint prefix matching with a trie, Circuit Breaker fail-open handling, trusted proxy checks, and Prometheus metrics.
+
+In benchmarks, the in-memory Python limiters handle over 2 million requests per second, while the Redis Lua scripts process around 6,700 requests per second with zero concurrency leaks under 50-thread stress tests."
 
 ---
 
-## 2. Fast Back-of-the-Envelope Estimation Flashcards
+## 2. Capacity Estimation Quick Reference
 
-When an interviewer asks: *"Scale this to 1 Million requests/second globally with 10 Million daily active users"*:
+When asked to size for 1 million requests per second with 10 million daily active keys:
 
-| Metric | Answer / Work Shown |
-| :--- | :--- |
-| **Peak Throughput** | $1,000,000\text{ req/sec}$ peak, $400,000\text{ req/sec}$ average. |
-| **Network Bandwidth** | $250\text{ bytes/transaction} \times 1\text{M req/sec} = 250\text{ MB/s} = \mathbf{2.0\text{ Gbps}}$ network ingress/egress. |
-| **Memory (GCRA)** | $10\text{M keys} \times 124\text{ B/key} \approx \mathbf{1.24\text{ GB}}$ ($\mathbf{1.86\text{ GB}}$ with safety buffer). |
-| **Memory (Token Bucket)**| $10\text{M keys} \times 144\text{ B/key} \approx \mathbf{1.44\text{ GB}}$ ($\mathbf{2.16\text{ GB}}$ with safety buffer). |
-| **Memory (Sliding Window Log)**| $10\text{M keys} \times 7.3\text{ KB/key} \approx \mathbf{73\text{ GB}}$ ($\mathbf{109.5\text{ GB}}$ with buffer) — **$58.8\times$ more memory!** |
-| **Redis Shard Count** | $1\text{ primary node} \approx 50,000\text{ Lua ops/sec}$. $1,000,000 / 50,000 = \mathbf{20\text{ primary shards}}$ ($+ 20\text{ multi-AZ replicas} = 40\text{ nodes}$). |
-| **Gateway CPU Cores** | $1\text{ core} \approx 8,000\text{ req/sec}$ async ASGI. $1\text{M} / 8\text{k} = \mathbf{125\text{ vCPUs}}$ ($16\times\text{ c7g.2xlarge}$ instances). |
-
-*(See full mathematical derivations in [docs/capacity_planning.md](file:///c:/GITHUB%20Repos/RateFortress/docs/capacity_planning.md)).*
+- Peak Throughput: 1,000,000 req/sec peak, 400,000 req/sec average.
+- Network Bandwidth: 250 bytes per check * 1,000,000 req/sec = 250 MB/s = 2.0 Gbps network ingress and egress.
+- Memory for GCRA: 10M keys * 124 bytes per key is roughly 1.24 GB (about 1.86 GB with safety buffer).
+- Memory for Token Bucket: 10M keys * 144 bytes per key is roughly 1.44 GB (about 2.16 GB with safety buffer).
+- Memory for Sliding Window Log: 10M keys * 7.3 KB per key is roughly 73 GB (about 109.5 GB with buffer). This is over 45 times more memory than Token Bucket.
+- Redis Shard Count: At 50,000 Lua operations per second per primary node, 1,000,000 / 50,000 = 20 primary shards. Adding multi-AZ replicas brings it to 40 nodes.
+- Gateway Cores: At 8,000 async requests per second per core, 1,000,000 / 8,000 = 125 vCPUs.
 
 ---
 
-## 3. Deep-Dive Technical Questions & Defenses
+## 3. Key Technical Questions & Answers
 
-### Q1: "How did you prevent concurrency race conditions in a distributed environment?"
-- **The Failure Mode:**
-  Under high concurrent load (e.g. 50 threads firing simultaneously against a limit of 10), naive rate limiters execute a **check-then-set** sequence (`GET` count, check if $< 10$, then `SET` count + 1). Because all reads occur before any writes commit, all 50 threads observe count $< 10$, admitting 18 to 25 requests—a catastrophic 150% over-admission leak.
-- **The Solution:**
-  We consolidated all read, eviction, bounds-checking, insertion, and TTL expiration logic into **atomic Lua scripts** (`redis_sliding_window_log.lua`, `redis_sliding_window_counter.lua`, `redis_token_bucket.lua`, `redis_leaky_bucket.lua`, `redis_gcra.lua`). Because Redis executes Lua scripts as a single atomic transaction on its single-threaded event loop, no interleaving operations can occur.
-- **Empirical Evidence:**
-  Stress testing with 50 concurrent threads in `tests/test_redis_concurrency.py` proved exactly 10 requests allowed and 40 blocked (strict 0% leakage).
+### How did you prevent concurrency race conditions in a distributed environment?
+Under high concurrency, separate read and write steps cause check-then-set race conditions. If fifty threads read count < 10 before any thread commits an increment, all fifty requests pass through.
 
----
+I solved this by moving the evaluation and update logic into atomic Redis Lua scripts. Because Redis executes Lua scripts on its single execution loop without interleaving other operations, check and increment occur in a single step. In my 50-thread stress tests, this dropped over-admission to 0%.
 
-### Q2: "What is GCRA, and why did Stripe choose it over Token Bucket?"
-- **The Math:**
-  GCRA (Generic Cell Rate Algorithm) represents rate limits as an **emission interval** ($T = \text{period} / \text{limit}$) and a **burst tolerance** ($\tau = \text{limit} \times T - T$). Instead of keeping track of a token counter and last refill timestamp, GCRA tracks a single scalar: the **Theoretical Arrival Time (TAT)**.
-  $$\text{proposed\_tat} = \max(\text{now}, \text{current\_tat}) + T$$
-  If $\text{proposed\_tat} - \text{now} > \tau + T$, the cell arrives too early and is rejected.
-- **Why It Wins on Redis:**
-  - Token Bucket requires a Redis Hash (`tokens`, `last_refilled`) $\rightarrow 144\text{ bytes}$ and multiple hash field parses.
-  - GCRA stores a single integer/float string timestamp $\rightarrow 124\text{ bytes}$, saving memory and achieving **3.3M req/sec** local throughput vs 2.1M for Token Bucket.
+### What is GCRA and why is it useful compared to Token Bucket?
+GCRA (Generic Cell Rate Algorithm) models rate limiting with an emission interval and a burst tolerance. Instead of storing tokens and a refill timestamp, GCRA tracks a single timestamp called the Theoretical Arrival Time (TAT).
 
----
+In Redis, Token Bucket requires storing multiple hash fields (tokens and timestamp), taking around 144 bytes per key. GCRA only stores a single timestamp string (around 124 bytes), saving memory while running slightly faster.
 
-### Q3: "What happens if Redis crashes or suffers network partition?"
-- **The Failure Mode:**
-  If an API gateway depends synchronously on Redis and Redis goes down, a naive gateway either throws HTTP 500 Internal Server Errors (taking down the entire business) or hangs on socket timeouts until worker threads exhaust.
-- **The Solution:**
-  We implemented a **Circuit Breaker** (`src/middleware/circuit_breaker.py`) wrapping all Redis calls:
-  1. **CLOSED State:** Nominal operation; calls proceed to Redis with a strict 1.0-second socket timeout.
-  2. **OPEN State:** After 5 consecutive Redis connection timeouts/errors, the circuit trips OPEN.
-  3. **Fail-Open Policy:** While OPEN, RateFortress bypasses Redis entirely and allows requests through to upstream handlers. A degraded rate limiter is far better than a total API outage.
-  4. **HALF-OPEN State:** After a 30-second cooldown, trial canary requests test Redis connectivity. If successful, the circuit resets to CLOSED.
-- **Observability Signal:**
-  Prometheus exposes `ratefortress_circuit_breaker_state{state="open"}` and Loki logs critical warnings.
+### What happens if Redis crashes?
+If an API gateway depends synchronously on Redis and Redis goes down, the gateway either throws 500 errors or hangs on socket timeouts until worker threads exhaust.
+
+I built a circuit breaker in `src/middleware/circuit_breaker.py` wrapping all Redis calls. In the closed state, calls execute normally with a 1.0-second timeout. After five consecutive failures, the breaker trips open and fails open, letting traffic pass through to upstream handlers.
+
+A degraded rate limiter is much better than taking down the entire API. After a 30-second cooldown, trial requests test connectivity before resetting to closed.
+
+### How would you handle rate limiting across multiple regions?
+This was kept single-region by design. Cross-region network latency (such as 80 ms between US and Europe) makes synchronous global database lookups impractical when the latency budget is under 2 ms.
+
+In a multi-region setup, each region runs its own local Redis cluster and gateway instances. Rather than acquiring single tokens across regions, local gateways pre-fetch token batches (such as 20 tokens with a 5-second lease) from a central coordinator. Over 95% of requests evaluate locally in under 1 ms, and cross-region round trips are amortized across the batch. If a region loses cross-region connectivity, it falls back to local quotas without taking down the service.
+
+### Why build this in Python rather than Go?
+The Go comparison was not in scope for this project. My goal was implementing the core rate limiting algorithms and Redis Lua atomicity from scratch, profiling async event loop behavior in Python, and establishing reliable benchmarks without extra language overhead.
+
+### How does RateFortress handle IP header spoofing?
+Attackers often spoof X-Forwarded-For with random IPs on every request. I implemented trusted proxy checks that parse the header from right to left, only accepting client IPs from configured upstream proxy CIDRs. If a request comes directly from an untrusted IP, the spoofed header is ignored and the socket IP is used instead.
 
 ---
 
-### Q4: "How do you design rate limiting across multiple geographic regions?"
-- **The Physical Constraint:**
-  Transatlantic fiber latency between US-East and EU-West is $\approx 80\text{ ms}$ round-trip. Running synchronous global database checks introduces an unacceptable 80ms delay on every single request when our SLO is $< 2\text{ ms}$.
-- **The Production Solution (Batched Token Leasing):**
-  1. Each region runs a local Redis cluster and local RateFortress instances.
-  2. A global token coordinator holds total quota pools.
-  3. Local regions do not acquire 1 token per request; they pre-fetch **token leases in batches** (e.g. chunks of 20 tokens with a 5-second lease TTL).
-  4. 95% of requests are evaluated against local memory in $< 1\text{ ms}$.
-  5. Cross-region communication is amortized by $20\times$. If a transatlantic fiber cut occurs, regions fall back to local autonomous proportional limits without cascading outages.
+## 4. Documentation References
 
-*(See full whiteboarding script in [docs/mock_interview_multi_region.md](file:///c:/GITHUB%20Repos/RateFortress/docs/mock_interview_multi_region.md)).*
-
----
-
-### Q5: "How does RateFortress defeat IP spoofing and bot abuse?"
-- **Anti-Spoofing via Trusted Proxy CIDRs:**
-  Attackers frequently spoof `X-Forwarded-For` with random IPs on every request. RateFortress uses right-to-left reverse proxy traversal: only hops originating from designated trusted CIDRs (e.g. AWS ALB or Cloudflare edge subnets) are unpacked. If an untrusted socket connects, headers are discarded and throttling binds to the socket IP.
-- **Behavioral Timing Shield:**
-  Automated bots fire requests with mechanical regularity (coefficient of variation $CV < 0.05$). RateFortress tracks inter-arrival jitter and automatically downgrades bot identities to a stricter tier ($0.2\times$ multiplier) without hard-blocking, avoiding false-positive outages.
-
----
-
-## 4. Key Artifacts Cross-Reference
-- [Capacity Planning & Math Estimations](file:///c:/GITHUB%20Repos/RateFortress/docs/capacity_planning.md)
-- [Mock Interview #1: Single-Region Gateway](file:///c:/GITHUB%20Repos/RateFortress/docs/mock_interview_single_region.md)
-- [Mock Interview #2: Multi-Region Global Topology](file:///c:/GITHUB%20Repos/RateFortress/docs/mock_interview_multi_region.md)
-- [ADR-001: Token Bucket & GCRA Architecture Decision Record](file:///c:/GITHUB%20Repos/RateFortress/docs/ADR-001-algorithm-choice.md)
-- [Red Team Adversarial Report](file:///c:/GITHUB%20Repos/RateFortress/docs/redteam_report.md)
-- [Comparative Benchmark Analysis](file:///c:/GITHUB%20Repos/RateFortress/docs/comparative_benchmark_article.md)
+- Capacity Planning: docs/capacity_planning.md
+- Single-Region Mock Interview: docs/mock_interview_single_region.md
+- Multi-Region Mock Interview: docs/mock_interview_multi_region.md
+- Architecture Decision Record: docs/ADR-001-algorithm-choice.md
+- Benchmarks: BENCHMARKS.md

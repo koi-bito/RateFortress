@@ -1,12 +1,4 @@
-"""Unit and Integration Tests for Day 143: Graceful Shutdown Handling.
-
-Validates:
-1. In-flight requests complete successfully when shutdown is triggered mid-request.
-2. New incoming requests arriving during shutdown are immediately rejected with HTTP 503 (Retry-After: 5).
-3. Readiness probe (/health/ready) returns 503 during shutdown to remove instance from load balancer traffic pool.
-4. Liveness probe (/health) remains 200 OK to allow orchestrators bounded grace period before hard SIGKILL.
-5. middleware.drain_in_flight() accurately monitors and waits for active requests to reach zero.
-"""
+"""Tests for Graceful Shutdown Handling."""
 
 import asyncio
 
@@ -18,7 +10,7 @@ from src.api.main import create_app
 
 @pytest.mark.asyncio
 async def test_in_flight_request_survives_shutdown_while_new_request_rejected():
-    """Confirms in-flight requests survive mid-request shutdown, while new requests are rejected."""
+    """Check in-flight requests survive mid-request shutdown, while new requests are rejected."""
     app = create_app(backend="memory")
 
     transport = httpx.ASGITransport(app=app)
@@ -26,7 +18,7 @@ async def test_in_flight_request_survives_shutdown_while_new_request_rejected():
         # 1. Start an in-flight request that takes 0.3 seconds to finish
         slow_task = asyncio.create_task(client.get("/api/slow-request?delay=0.3"))
 
-        # 2. Wait 0.05s to ensure the slow request has entered the middleware and is actively executing
+        # 2. Wait 0.05s to check the slow request has entered the middleware and is actively executing
         await asyncio.sleep(0.05)
 
         # 3. Simulate SIGTERM / shutdown signal arrival
@@ -50,7 +42,7 @@ async def test_in_flight_request_survives_shutdown_while_new_request_rejected():
 
 @pytest.mark.asyncio
 async def test_readiness_and_liveness_probes_during_shutdown():
-    """Confirms readiness returns 503 (detour traffic) while liveness returns 200 (allow drain)."""
+    """Check readiness returns 503 (detour traffic) while liveness returns 200 (allow drain)."""
     app = create_app(backend="memory")
     transport = httpx.ASGITransport(app=app)
 
@@ -86,7 +78,7 @@ async def test_middleware_drain_in_flight():
         middleware = getattr(app.state, "rate_limit_middleware", None)
         assert middleware is not None
 
-        # Verify drain on idle middleware succeeds immediately
+        # Check drain on idle middleware succeeds immediately
         drained = await middleware.drain_in_flight(timeout=1.0)
         assert drained is True
         assert middleware._active_requests == 0

@@ -1,4 +1,4 @@
-"""Test suite for Week 11 Observability: Grafana, Structured Logging, Tracing & Alerting."""
+"""Tests for Observability: Grafana, Structured Logging, Tracing & Alerting."""
 
 import json
 import logging
@@ -13,7 +13,7 @@ from src.monitoring.tracing import in_memory_span_exporter
 
 
 def test_structured_json_logging_format():
-    """Validates that JSONLogFormatter emits valid, parseable JSON with all telemetry keys."""
+    """Check JSONLogFormatter emits valid, parseable JSON with all telemetry keys."""
     formatter = JSONLogFormatter()
     record = logging.LogRecord(
         name="ratefortress",
@@ -49,7 +49,7 @@ def test_structured_json_logging_format():
 
 
 def test_opentelemetry_tracing_and_custom_spans():
-    """Verifies that OpenTelemetry generates root HTTP spans and custom rate limiter child spans."""
+    """Check OpenTelemetry generates root HTTP spans and custom rate limiter child spans."""
     in_memory_span_exporter.clear()
 
     app = create_app(backend="memory")
@@ -74,7 +74,7 @@ def test_opentelemetry_tracing_and_custom_spans():
 
 
 def test_alert_rules_yaml_syntax_and_schema():
-    """Ensures monitoring/alert_rules.yml parses as valid Prometheus alert rule groups."""
+    """Check monitoring/alert_rules.yml parses as valid Prometheus alert rule groups."""
     base_dir = Path(__file__).resolve().parent.parent
     alert_rules_file = base_dir / "monitoring" / "alert_rules.yml"
     assert alert_rules_file.exists()
@@ -94,7 +94,7 @@ def test_alert_rules_yaml_syntax_and_schema():
 
 
 def test_grafana_dashboard_json_validity():
-    """Validates that monitoring/grafana_dashboard.json is well-formed with essential panels."""
+    """Check monitoring/grafana_dashboard.json is well-formed with essential panels."""
     base_dir = Path(__file__).resolve().parent.parent
     dashboard_file = base_dir / "monitoring" / "grafana_dashboard.json"
     assert dashboard_file.exists()
@@ -111,7 +111,7 @@ def test_grafana_dashboard_json_validity():
 
 
 def test_docker_compose_and_promtail_syntax():
-    """Validates docker-compose.yml and promtail.yml configs."""
+    """Check docker-compose.yml and promtail.yml configs."""
     base_dir = Path(__file__).resolve().parent.parent
 
     compose_file = base_dir / "docker-compose.yml"

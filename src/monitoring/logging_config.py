@@ -1,9 +1,4 @@
-"""Structured JSON Logging Configuration for RateFortress (Week 11).
-
-Provides high-performance JSON-formatted log emission for seamless ingestion into
-Grafana Loki, Promtail, or Elasticsearch, enabling field-level filtering on client_id,
-pricing tiers, algorithm decisions, and response status codes.
-"""
+"""Structured JSON Logging Configuration for RateFortress (Week 11)."""
 
 import json
 import logging
@@ -68,7 +63,6 @@ def setup_structured_logging(
     log_level: str = "INFO",
     log_dir: str | Path | None = None,
 ) -> logging.Logger:
-    """Configures root and application loggers to emit structured JSON logs."""
     logger = logging.getLogger("ratefortress")
     logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
     logger.propagate = False

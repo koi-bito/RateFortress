@@ -1,4 +1,4 @@
-"""Unit and multi-instance tests for RedisSlidingWindowCounter rate limiter (Day 36)."""
+"""Unit and multi-instance tests for RedisSlidingWindowCounter rate limiter."""
 
 import time
 
@@ -62,7 +62,7 @@ def test_multi_instance_shared_state(redis_client):
 
 
 def test_window_weighting_decay(redis_client):
-    """Verifies that requests from the previous window smoothly decay according to the weighting formula."""
+    """Check requests from the previous window smoothly decay according to the weighting formula."""
     window = 2
     limiter = RedisSlidingWindowCounter(redis_client, limit=5, window_seconds=window)
 

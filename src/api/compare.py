@@ -1,10 +1,4 @@
-"""Algorithm Comparison Engine for RateFortress.
-
-Runs synthetic traffic across all five pure-Python rate limiting algorithms
-(Fixed Window, Sliding Window Log, Sliding Window Counter, Token Bucket, and Leaky Bucket)
-and generates empirical comparison reports covering allowed/blocked metrics, decision latency,
-algorithmic tradeoffs, and fairness analysis across uniform and skewed traffic distributions.
-"""
+"""Algorithm Comparison Engine for RateFortress."""
 
 from __future__ import annotations
 
@@ -224,14 +218,6 @@ def generate_synthetic_traffic(
     window_seconds: int,
     pattern: str = "uniform",
 ) -> tuple[list[tuple[str, float, bool]], int, int]:
-    """Generates synthetic requests (user_id, timestamp_offset, is_bursty).
-
-    Returns:
-        tuple containing:
-        - Sorted list of request tuples (user_id, timestamp_offset, is_bursty)
-        - Count of bursty users
-        - Count of steady users
-    """
     requests: list[tuple[str, float, bool]] = []
     w = float(window_seconds)
 
@@ -283,7 +269,6 @@ def run_comparison_simulation(
     limit: int | None = None,
     pattern: str = "uniform",
 ) -> ComparisonResponse:
-    """Simulates synthetic traffic across all five rate limiting algorithms."""
     effective_limit = (
         limit if limit is not None else max(1, int(requests_per_user * 0.4))
     )
@@ -436,7 +421,6 @@ def compare_algorithms(
         default=None, description="Output format: 'json' or 'html'"
     ),
 ) -> Any:
-    """Executes a comparative benchmark across all 5 rate-limiting algorithms."""
     sim_result = run_comparison_simulation(
         users=users,
         requests_per_user=requests_per_user,

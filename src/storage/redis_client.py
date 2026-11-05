@@ -1,9 +1,4 @@
-"""Redis connection manager and storage backend utility for RateFortress.
-
-Provides unified access to Redis connections, with support for connection pooling,
-database indexing, and an optional in-process fallback (using fakeredis) for local
-testing environments where Docker or a standalone Redis server is temporarily unavailable.
-"""
+"""Redis connection manager and storage backend utility for RateFortress."""
 
 import logging
 import os
@@ -18,7 +13,6 @@ _shared_fake_server = None
 
 
 def get_shared_fake_server():
-    """Returns a shared fakeredis FakeServer singleton for cross-instance simulation."""
     global _shared_fake_server
     if _shared_fake_server is None:
         try:
@@ -38,12 +32,6 @@ def get_redis_client(
     decode_responses: bool = True,
     fallback_to_fake: bool = True,
 ) -> Any:
-    """Creates and returns a Redis client.
-
-    If a real Redis instance is reachable at the target host/port, returns a standard
-    `redis.Redis` instance. If unreachable and `fallback_to_fake=True`, returns a
-    `fakeredis.FakeRedis` client connected to a shared simulated server for seamless local testing.
-    """
     redis_host = host or os.getenv("REDIS_HOST", "localhost")
     redis_port = port or int(os.getenv("REDIS_PORT", "6379"))
     redis_password = password or os.getenv("REDIS_PASSWORD", None)
@@ -93,5 +81,5 @@ def get_redis_client(
                 pass
         raise ConnectionError(
             f"Could not connect to Redis at {redis_host}:{redis_port}. "
-            "Ensure Redis is running (e.g., via Docker: docker run -d -p 6379:6379 redis)."
+            "Make sure Redis is running (e.g., via Docker: docker run -d -p 6379:6379 redis)."
         ) from exc

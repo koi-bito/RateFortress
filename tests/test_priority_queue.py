@@ -39,10 +39,7 @@ def test_fifo_ordering_for_equal_priority():
 
 
 def test_mixed_overload_simulation():
-    """Simulates 50 free-tier and 50 paid-tier requests pushed in random order.
-
-    Confirms all 50 paid requests are dequeued before any free request.
-    """
+    """Simulates 50 free-tier and 50 paid-tier requests pushed in random order."""
     pq = PriorityRequestQueue()
     requests = []
 
@@ -95,10 +92,7 @@ async def test_below_saturation_threshold_free_tier_passes_normally():
 
 @pytest.mark.asyncio
 async def test_saturation_sheds_free_tier_and_serves_paid_tier():
-    """Under simulated saturation, free-tier requests are shed (503) while paid-tier requests
-
-    are queued and served when capacity frees up.
-    """
+    """Under simulated saturation, free-tier requests are shed (503) while paid-tier requests."""
     app = FastAPI()
     app.add_middleware(
         RateLimitMiddleware,
@@ -151,10 +145,7 @@ async def test_saturation_sheds_free_tier_and_serves_paid_tier():
 
 @pytest.mark.asyncio
 async def test_priority_ordering_under_saturation():
-    """Higher priority requests (enterprise) jump ahead of lower priority requests (paid)
-
-    in the PriorityRequestQueue under saturation.
-    """
+    """Higher priority requests (enterprise) jump ahead of lower priority requests (paid)."""
     app = FastAPI()
     app.add_middleware(
         RateLimitMiddleware,
@@ -208,10 +199,7 @@ async def test_priority_ordering_under_saturation():
 
 @pytest.mark.asyncio
 async def test_saturation_queue_depth_exceeded():
-    """When PriorityRequestQueue reaches max_queue_depth, subsequent requests are shed with 503.
-
-    Once timed-out requests expire, new requests are accepted without being blocked by dead futures.
-    """
+    """When PriorityRequestQueue reaches max_queue_depth, subsequent requests are shed with 503."""
     app = FastAPI()
     app.add_middleware(
         RateLimitMiddleware,

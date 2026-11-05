@@ -1,10 +1,4 @@
-"""Leaky Bucket rate limiting algorithm.
-
-Requests enter a FIFO queue (the bucket) of fixed capacity and leak out
-at a strictly constant rate. If the queue is full, new requests overflow
-and are rejected. Unlike Token Bucket, Leaky Bucket enforces a smooth,
-constant outflow rate, prohibiting bursts from exceeding queue capacity.
-"""
+"""Leaky Bucket rate limiting algorithm."""
 
 import time
 from collections import deque
@@ -14,14 +8,7 @@ from cachetools import LRUCache
 
 
 class LeakyBucket:
-    """Leaky Bucket rate limiter.
-
-    Attributes:
-        capacity: Maximum number of requests the bucket can hold concurrently.
-        leak_rate_per_sec: Rate at which requests leak (process) out of the bucket per second.
-        max_clients: Maximum client entries retained in memory before LRU eviction.
-        now_fn: Callable returning current time in seconds (default: time.time).
-    """
+    """Leaky Bucket rate limiter."""
 
     def __init__(
         self,
@@ -63,14 +50,6 @@ class LeakyBucket:
             self.last_leak[user_id] = self.last_leak.get(user_id, now) + leaked / self.leak_rate
 
     def is_allowed(self, user_id: str) -> bool:
-        """Determines if a request by user_id fits into the bucket queue.
-
-        Args:
-            user_id: Unique identifier for the client/user.
-
-        Returns:
-            True if request was queued/accepted, False if bucket overflowed.
-        """
         now = self._now()
         self._leak(user_id, now)
 
@@ -82,7 +61,6 @@ class LeakyBucket:
         return False
 
     def get_queue_size(self, user_id: str) -> int:
-        """Returns the current number of requests in the bucket for user_id."""
         now = self._now()
         self._leak(user_id, now)
         queue = self.queues.get(user_id)
@@ -90,15 +68,12 @@ class LeakyBucket:
 
     @property
     def limit(self) -> int:
-        """Returns the nominal capacity of the bucket."""
         return self.capacity
 
     def get_remaining(self, user_id: str) -> int:
-        """Returns the remaining empty slots in the bucket queue."""
         return self.get_remaining_capacity(user_id)
 
     def get_retry_after(self, user_id: str) -> int:
-        """Returns the number of seconds until a slot leaks out."""
         if self.get_remaining(user_id) > 0:
             return 0
         import math
@@ -106,5 +81,4 @@ class LeakyBucket:
         return max(1, math.ceil(1.0 / self.leak_rate))
 
     def get_remaining_capacity(self, user_id: str) -> int:
-        """Returns the remaining empty capacity in the bucket for user_id."""
         return max(0, self.capacity - self.get_queue_size(user_id))

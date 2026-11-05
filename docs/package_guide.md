@@ -1,18 +1,17 @@
 # RateFortress — Standalone Middleware Integration Guide
 
-**Package Name:** `ratefortress`  
-**License:** MIT  
-**Compatibility:** FastAPI $\ge$ 0.100, Starlette $\ge$ 0.30, Python 3.11+  
+- Package Name: ratefortress
+- License: MIT
+- Compatibility: FastAPI >= 0.100, Starlette >= 0.30, Python 3.11+
 
 ---
 
 ## 1. Installation
 
-Install via pip directly from the repository or your private index:
-
+Install via pip from the local repository or a wheel build:
 ```bash
 pip install ratefortress
-# Or with optional gRPC microservice support:
+# Or with optional gRPC support:
 pip install "ratefortress[grpc]"
 ```
 
@@ -20,7 +19,7 @@ pip install "ratefortress[grpc]"
 
 ## 2. Quickstart: 5-Line Integration
 
-Drop RateFortress into any existing FastAPI application:
+Here is how I plug RateFortress into an existing FastAPI application:
 
 ```python
 from fastapi import FastAPI
@@ -28,12 +27,12 @@ import redis.asyncio as aioredis
 from src.middleware.rate_limit_middleware import RateLimitMiddleware
 from src.algorithms.async_redis_gcra import AsyncRedisGCRA
 
-app = FastAPI(title="My High-Scale Service")
+app = FastAPI(title="My Service")
 
 # 1. Connect to Redis
 redis_client = aioredis.from_url("redis://localhost:6379/0", decode_responses=True)
 
-# 2. Instantiate your preferred algorithm (e.g. GCRA, TokenBucket, SlidingWindowCounter)
+# 2. Instantiate algorithm
 limiter = AsyncRedisGCRA(redis_client, limit=100, period=60.0)
 
 # 3. Register the ASGI Middleware
@@ -44,7 +43,7 @@ async def get_items():
     return [{"id": 1, "name": "Protected item"}]
 ```
 
-Every response automatically receives standard RFC rate-limiting headers:
+Every response receives standard rate limit headers:
 ```http
 HTTP/1.1 200 OK
 X-RateLimit-Limit: 100
@@ -65,7 +64,7 @@ Content-Type: application/json
 
 ## 3. Tiered Limits & Route-Specific Quotas
 
-RateFortress supports hierarchical route prefix matching via an internal `EndpointTrie`:
+RateFortress supports hierarchical route prefix matching using an internal EndpointTrie:
 
 ```python
 from src.middleware.config import EndpointRule
@@ -76,10 +75,10 @@ trie = EndpointTrie()
 # Global default: 60 req/min
 trie.insert("/", EndpointRule(limit=60, window_seconds=60))
 
-# Strict quota on sensitive or expensive operations
+# Tighter limit on expensive operations
 trie.insert("/api/ai-generation", EndpointRule(limit=5, window_seconds=60))
 
-# Relaxed quota for administrative users
+# Relaxed limit for admin routes
 trie.insert("/api/admin/*", EndpointRule(limit=500, window_seconds=60))
 ```
 
@@ -87,12 +86,11 @@ trie.insert("/api/admin/*", EndpointRule(limit=500, window_seconds=60))
 
 ## 4. Resilience & Fail-Open Behavior
 
-In cloud environments where Redis might experience momentary failover or network partitioning, RateFortress ensures your API remains available:
+If Redis experiences a failover or brief network issue, the circuit breaker keeps the API responsive by failing open:
 
 ```python
 from src.middleware.circuit_breaker import CircuitBreaker
 
-# Automatically fails open on storage downtime
+# Fails open on storage downtime
 breaker = CircuitBreaker(failure_threshold=5, recovery_timeout_sec=15.0, fail_open=True)
 ```
-

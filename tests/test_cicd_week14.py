@@ -1,4 +1,4 @@
-"""Tests for Week 14: CI/CD Workflows, Blue-Green Deployment, and Incident Runbook."""
+"""Tests for CI/CD Workflows, Blue-Green Deployment, and Incident Runbook."""
 
 from pathlib import Path
 
@@ -10,7 +10,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_github_actions_test_workflow():
-    """Validates .github/workflows/test.yml triggers, services, and matrix strategies."""
+    """Check .github/workflows/test.yml triggers, services, and matrix strategies."""
     workflow_path = PROJECT_ROOT / ".github" / "workflows" / "test.yml"
     assert workflow_path.exists(), "test.yml workflow must exist"
 
@@ -24,21 +24,21 @@ def test_github_actions_test_workflow():
     assert "test" in jobs
     test_job = jobs["test"]
 
-    # Verify Python matrix strategy
+    # Check Python matrix strategy
     strategy = test_job.get("strategy", {})
     matrix = strategy.get("matrix", {})
     py_versions = matrix.get("python-version", [])
     assert "3.11" in py_versions
     assert "3.13" in py_versions
 
-    # Verify Redis service container
+    # Check Redis service container
     services = test_job.get("services", {})
     assert "redis" in services
     redis_svc = services["redis"]
     assert "redis" in redis_svc["image"]
     assert "6379:6379" in redis_svc["ports"]
 
-    # Verify pytest execution step
+    # Check pytest execution step
     steps = test_job.get("steps", [])
     step_runs = [s.get("run", "") for s in steps]
     assert any("pytest" in r for r in step_runs)
@@ -46,7 +46,7 @@ def test_github_actions_test_workflow():
 
 
 def test_github_actions_deploy_workflow():
-    """Validates .github/workflows/deploy.yml auto-deploy and post-deploy smoke testing."""
+    """Check .github/workflows/deploy.yml auto-deploy and post-deploy smoke testing."""
     deploy_path = PROJECT_ROOT / ".github" / "workflows" / "deploy.yml"
     assert deploy_path.exists(), "deploy.yml workflow must exist"
 
@@ -109,7 +109,7 @@ def test_blue_green_simulation_execution():
 
 
 def test_incident_runbook_completeness():
-    """Confirms docs/runbook.md contains severity tiers, procedures, and disaster recovery."""
+    """Check docs/runbook.md contains severity tiers, procedures, and disaster recovery."""
     runbook_path = PROJECT_ROOT / "docs" / "runbook.md"
     assert runbook_path.exists(), "docs/runbook.md must exist"
 

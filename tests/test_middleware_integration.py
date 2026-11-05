@@ -1,8 +1,4 @@
-"""Comprehensive integration tests for FastAPI RateLimitMiddleware.
-
-Validates end-to-end ASGI behavior including EndpointTrie prefix matching,
-API key tiers, CircuitBreaker fail-open resilience, and RFC rate limit headers.
-"""
+"""integration tests for FastAPI RateLimitMiddleware."""
 
 from unittest.mock import patch
 
@@ -50,10 +46,7 @@ def test_enterprise_tier_50x_quota():
 
 
 def test_circuit_breaker_fail_open_on_limiter_crash():
-    """Verifies that if the rate limiter throws an unexpected exception,
-
-    the middleware fails open and returns HTTP 200 rather than dropping customer requests.
-    """
+    """Check if the rate limiter throws an unexpected exception,."""
     headers = {"X-Forwarded-For": "172.16.0.1"}
 
     # Mock is_allowed to simulate a sudden storage crash / connection error
@@ -67,10 +60,7 @@ def test_circuit_breaker_fail_open_on_limiter_crash():
 
 
 def test_limiter_cache_size_stays_constant_on_parametrized_routes():
-    """Bug 6 verification: hitting many distinct concrete paths under one wildcard rule
-
-    must NOT cause unbounded cache growth in middleware._limiter_cache.
-    """
+    """Bug 6 verification: hitting many distinct concrete paths under one wildcard rule."""
     from fastapi import FastAPI
 
     from src.middleware.config import EndpointRule
@@ -108,10 +98,7 @@ def test_limiter_cache_size_stays_constant_on_parametrized_routes():
 
 
 def test_two_endpoints_same_algorithm_independent_state(redis_client):
-    """Bug 5 verification: two endpoints with different limits using the same algorithm
-
-    must maintain independent state in Redis for the same user via scoped keys.
-    """
+    """Bug 5 verification: two endpoints with different limits using the same algorithm."""
     from fastapi import FastAPI
 
     from src.middleware.config import EndpointRule
@@ -151,10 +138,7 @@ def test_two_endpoints_same_algorithm_independent_state(redis_client):
 
 
 def test_retry_after_absent_on_200_and_present_on_429():
-    """Bug 7 verification: Retry-After header must ONLY appear on 429 responses,
-
-    never on successful 200 OK responses with quota remaining.
-    """
+    """Bug 7 verification: Retry-After header must ONLY appear on 429 responses,."""
     headers = {"X-Forwarded-For": "198.51.100.77"}
 
     # 1. Allowed request -> 200 OK without Retry-After

@@ -1,4 +1,4 @@
-"""Unit and Integration Tests for Week 23 Admin API, Dashboard, and Key Store."""
+"""Tests for Admin API, Dashboard, and Key Store."""
 
 import os
 
@@ -29,7 +29,7 @@ def setup_fresh_app():
 
 
 def test_admin_auth_rejection_and_success():
-    """Verifies that missing or invalid admin credentials are strictly rejected."""
+    """Check missing or invalid admin credentials are strictly rejected."""
     client, _ = setup_fresh_app()
 
     # Missing auth
@@ -68,7 +68,7 @@ def test_admin_auth_rejection_and_success():
 
 
 def test_admin_misconfiguration_returns_503(monkeypatch):
-    """Verifies that missing or default ADMIN_SECRET_KEY disables admin routes with HTTP 503."""
+    """Check missing or default ADMIN_SECRET_KEY disables admin routes with HTTP 503."""
     client, _ = setup_fresh_app()
 
     # Default secret key configured
@@ -159,7 +159,7 @@ def test_admin_key_crud_lifecycle():
 
 
 def test_middleware_rate_limit_integration_with_new_key():
-    """Confirms that newly issued keys immediately take effect in rate limit middleware."""
+    """Check newly issued keys immediately take effect in rate limit middleware."""
     client, _ = setup_fresh_app()
     admin_headers = {"X-Admin-Key": TEST_ADMIN_KEY}
 
@@ -217,7 +217,7 @@ def test_redis_key_store_persistence_lifecycle():
 
 
 def test_dashboard_ui_endpoints():
-    """Verifies that /admin and /dashboard serve the HTML administrative dashboard."""
+    """Check /admin and /dashboard serve the HTML administrative dashboard."""
     client, _ = setup_fresh_app()
 
     res_admin = client.get("/admin")
@@ -231,7 +231,7 @@ def test_dashboard_ui_endpoints():
 
 
 def test_multi_worker_key_cache_and_invalidation():
-    """Verifies Fix 9: store fallback on cache miss and Pub/Sub invalidation."""
+    """Check Fix 9: store fallback on cache miss and Pub/Sub invalidation."""
     fake_r = fakeredis.FakeRedis(decode_responses=True)
     shared_store = RedisKeyStore(fake_r)
 
@@ -244,7 +244,7 @@ def test_multi_worker_key_cache_and_invalidation():
     # Clear mgr2's in-memory dictionary to simulate missing key
     mgr2._keys.clear()
 
-    # Worker 2 verifies key -> falls back to store and populates local cache
+    # Worker 2 check key -> falls back to store and populates local cache
     assert new_key not in mgr2._keys
     meta = mgr2.verify_key(new_key)
     assert meta is not None

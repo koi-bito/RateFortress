@@ -1,9 +1,4 @@
-"""Redis-backed Leaky Bucket rate limiting algorithm using atomic Lua scripting.
-
-Guarantees atomic queue management, constant leak drainage, and cross-instance synchronization.
-Requests enter the bucket queue and leak out at a steady rate. If the bucket capacity is full,
-new incoming requests overflow and are rejected.
-"""
+"""Redis-backed Leaky Bucket rate limiting algorithm using atomic Lua scripting."""
 
 import time
 from pathlib import Path
@@ -41,7 +36,6 @@ class RedisLeakyBucket:
         return f"leaky_bucket:{self.namespace}:{user_id}"
 
     def is_allowed(self, user_id: str) -> bool:
-        """Determines if a request by user_id fits into the bucket queue."""
         key = self._key(user_id)
         now = time.time()
         res = self._script(
@@ -51,7 +45,6 @@ class RedisLeakyBucket:
         return bool(res[0])
 
     def remaining(self, user_id: str) -> int:
-        """Returns the number of available empty slots in the bucket queue."""
         key = self._key(user_id)
         now = time.time()
         res = self._script(
@@ -61,11 +54,9 @@ class RedisLeakyBucket:
         return int(res[1])
 
     def get_remaining(self, user_id: str) -> int:
-        """Alias for `remaining`."""
         return self.remaining(user_id)
 
     def retry_after(self, user_id: str) -> int:
-        """Returns the seconds to wait until at least one slot in the bucket leaks."""
         key = self._key(user_id)
         now = time.time()
         res = self._script(
@@ -75,11 +66,9 @@ class RedisLeakyBucket:
         return int(res[2])
 
     def get_retry_after(self, user_id: str) -> int:
-        """Alias for `retry_after`."""
         return self.retry_after(user_id)
 
     def get_queue_size(self, user_id: str) -> int:
-        """Returns the current number of requests in the bucket for user_id."""
         key = self._key(user_id)
         now = time.time()
         res = self._script(
@@ -90,5 +79,4 @@ class RedisLeakyBucket:
 
     @property
     def limit(self) -> int:
-        """Returns the nominal capacity of the bucket queue."""
         return self.capacity

@@ -1,8 +1,4 @@
-"""Asynchronous Redis-backed Sliding Window Log rate limiter using atomic Lua scripting.
-
-Maintains precise millisecond-level window logs using Redis Sorted Sets (ZSET)
-via non-blocking redis.asyncio Lua calls.
-"""
+"""Asynchronous Redis-backed Sliding Window Log rate limiter using atomic Lua scripting."""
 
 import time
 import uuid
@@ -40,7 +36,6 @@ class AsyncRedisSlidingWindowLog:
         return f"sliding_log:{self.namespace}:{user_id}"
 
     async def is_allowed(self, user_id: str) -> bool:
-        """Determines if a request from user_id is permitted within the sliding window."""
         key = self._key(user_id)
         now = time.time()
         member_id = f"{now}:{uuid.uuid4().hex[:8]}"
@@ -52,7 +47,6 @@ class AsyncRedisSlidingWindowLog:
         return bool(res[0])
 
     async def remaining(self, user_id: str) -> int:
-        """Returns the number of remaining requests without logging an entry."""
         key = self._key(user_id)
         now = time.time()
         res = await self._script(
@@ -65,7 +59,6 @@ class AsyncRedisSlidingWindowLog:
         return await self.remaining(user_id)
 
     async def retry_after(self, user_id: str) -> int:
-        """Returns the number of seconds until the oldest log entry expires."""
         key = self._key(user_id)
         now = time.time()
         res = await self._script(

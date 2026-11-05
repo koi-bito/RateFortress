@@ -1,10 +1,4 @@
-"""Unit tests for Day 51 DSA Queue and Concurrency problems.
-
-Tests:
-1. MyCircularQueue (LeetCode #622)
-2. BoundedBlockingQueue (LeetCode #1188)
-3. RecentCounter (LeetCode #933)
-"""
+"""Unit tests for DSA Queue and Concurrency problems."""
 
 import threading
 import time

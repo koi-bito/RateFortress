@@ -1,33 +1,33 @@
 # RateFortress — Benchmark Results & Analysis
 
-This document provides a comprehensive, publication-grade engineering report tracking empirical throughput, latency distributions, concurrency behavior, and memory characteristics across all rate limiting algorithms, storage architectures, and load testing regimes.
+These are the benchmark results I collected while testing the algorithms across different storage setups and load generators.
 
 ---
 
-## 🏆 Key Findings & Executive Summary
+## Key Findings
 
-1. **Algorithmic Efficiency:** In-memory pure Python rate limiters achieve **2.0M to 3.4M req/s** per core with sub-microsecond latency. Sliding Window Counter delivers the best balance of strict boundary protection ($O(1)$ memory, zero window-edge leaks) with throughput exceeding 2.1M req/s.
-2. **Distributed Synchronization Overhead vs. Correctness:** Transitioning from in-process memory to distributed Redis storage introduces network socket round-trips, reducing raw throughput to **10k–44k req/s** per single-client thread. However, this external state is strictly mandatory in production to prevent horizontal container scaling from multiplying user quotas across nodes.
-3. **Atomicity Under Concurrent Barrage:** Non-atomic Redis pipelines suffer severe check-then-insert race conditions under high concurrency, admitting 18–25 requests against a quota of 10. Consolidating logic into **atomic Lua scripts** completely eliminates race conditions, yielding an empirical **0% over-admission leak** across all 5 algorithms.
-4. **Async Redis Non-Blocking Architecture:** Migrating from synchronous `redis.Redis` to `redis.asyncio` prevents event-loop starvation in FastAPI/Uvicorn, lowering median response latency by **23.5%** (13.0 ms vs. 17.0 ms) under 500 concurrent users. Single-worker capacity saturates between **1,300 and 1,420 req/s**.
-5. **Load Generator Architecture (k6 vs. Locust):** Go-based k6 (leveraging preemptive goroutines and zero-overhead native networking) exhibits virtually zero client-side resource drag compared to Python's Gevent-based Locust, providing cleaner latency measurement fidelity and sustaining over **5,500 req/s** during peak load bursts.
-6. **Spike Shock vs. Soak Stability:** An instant 1,500-user spike exposes OS TCP socket backlog bottlenecks (`SOMAXCONN`), resulting in connection resets, whereas a gradual ramp to 500 users achieves 0.0% failure rate. Sustained soak testing over time verified **0.0 MB net RSS memory drift**, proving that Redis TTL strategies and async connection pooling eliminate memory and descriptor leaks.
-
----
-
-## 💻 Test Environment
-
-- **OS:** Windows (x86_64)
-- **Python Version:** 3.13.13
-- **ASGI Server:** Uvicorn (FastAPI)
-- **Load Generation Tools:** Locust 2.47.0 (Python/Gevent), k6 v0.56.0 (Go/Sobek)
-- **Redis Engines:** Redis 7+ / `redis.asyncio` with atomic Lua scripts; `fakeredis` shared server for deterministic headless runs.
+1. In-memory Python limiters run in microseconds, but they only work for a single process. Sliding Window Counter gave me the best compromise between memory usage and edge-of-window accuracy.
+2. Moving to Redis dropped throughput from millions to tens of thousands per second because of network round-trips. That drop is the price of keeping counters consistent across multiple server instances.
+3. Without Lua scripts, Redis had bad race conditions under concurrency. Multiple workers checked the key before any worker incremented it, letting through twice the allowed quota. Writing Lua scripts fixed that completely.
+4. Switching to redis.asyncio kept FastAPI's event loop from stalling under load. The median latency improved once workers stopped blocking on synchronous Redis sockets.
+5. k6 was much lighter on my machine than Locust. Locust's Gevent workers started eating CPU at higher loads, which skewed the timings, while k6 stayed steady.
+6. A sudden traffic spike to 1,500 connections failed because the OS socket backlog filled up immediately, dropping connections before Python ever saw them. Once traffic steadied, memory remained flat over time, showing that the Redis TTLs and connection pools were not leaking.
 
 ---
 
-## 📊 Round 1: In-Memory Pure Python Implementations (Days 11–21)
+## Test Environment
 
-*Harness: `benchmarks/run_benchmark.py` (10,000 requests, 100 simulated clients, limit = 50 reqs / 10s)*
+- OS: Windows (x86_64)
+- Python Version: 3.13.13
+- ASGI Server: Uvicorn (FastAPI)
+- Load Generation Tools: Locust 2.47.0 (Python/Gevent), k6 v0.56.0 (Go/Sobek)
+- Redis Engines: Redis 7+ / redis.asyncio with atomic Lua scripts; fakeredis shared server for deterministic headless runs.
+
+---
+
+## Round 1: In-Memory Pure Python Implementations (Days 11–21)
+
+Harness: `benchmarks/run_benchmark.py` (10,000 requests, 100 simulated clients, limit = 50 reqs / 10s)
 
 | Algorithm | Throughput (req/s) | Allowed | Blocked | Elapsed (s) | Memory / User | Burst Tolerance | Boundary Leak? |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
@@ -38,33 +38,30 @@ This document provides a comprehensive, publication-grade engineering report tra
 | **Leaky Bucket** | **2,580,845 req/s** | 5,000 | 5,000 | 0.0039s | $O(\text{Queue size})$ | Strict queue outflow | **No** |
 | **GCRA (Cell Rate)** | **3,303,492 req/s** | 5,000 | 5,000 | 0.0030s | $O(1)$ (~32 bytes) | Configurable tolerance $\tau$ | **No** |
 
-### Empirical Tradeoff Evidence: The Window Boundary Problem (Day 15)
-Tested via `benchmarks/compare_window_boundary.py`:
-- **Scenario:** Limit = 5 requests per 10-second window.
-- **Traffic Pattern:** 5 requests sent at the tail of window 1 ($t=8.0$ to $9.9$), followed immediately by 5 requests at the start of window 2 ($t=10.1$ to $10.5$).
-- **Outcome:** Fixed Window Counter leaked **10 / 10 requests** (2x quota breach), whereas Sliding Window Log and Sliding Window Counter permitted exactly **5 / 10 requests**, preserving rate limit guarantees.
+### Window Boundary Behavior
+
+When testing Fixed Window Counter with bursts right at the boundary between two windows, it allowed double the quota. The first window reset right as the second burst arrived. Sliding Window Log and Sliding Window Counter both caught that burst and capped it properly.
 
 ---
 
-## ⚡ Round 2: Middleware Integration & HTTP Burst Throttling (Day 31)
+## Round 2: Middleware Integration & HTTP Burst Throttling (Day 31)
 
-*Tested via `loadtests/manual_load_burst.py` against FastAPI RateLimitMiddleware:*
-- **Target Endpoint:** `/api/test` (Limit: 10 requests / 60 seconds, Token Bucket)
-- **Client Identity:** Anonymous IP (`203.0.113.195`)
+Tested via `loadtests/manual_load_burst.py` against FastAPI RateLimitMiddleware:
+- Target Endpoint: `/api/test` (Limit: 10 requests / 60 seconds, Token Bucket)
+- Client Identity: Anonymous IP (`203.0.113.195`)
 
 | Request Range | Status Code | Remaining Header | Retry-After Header | Middleware Action |
 | :--- | :--- | :--- | :--- | :--- |
 | **#1 to #10** | **HTTP 200 OK** | 9 down to 0 | 0s (10th: 6s) | Allowed (Token consumed) |
 | **#11 to #30** | **HTTP 429 Too Many Requests** | 0 | 6s | **Throttled (Quota exhausted)** |
 
-- **Empirical Validation:** Strict transition from HTTP 200 to HTTP 429 at **request #11** with zero quota leak.
-- **Header Integrity:** Accurately generated standard headers: `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset`, and `Retry-After`.
+I sent 30 requests in a loop to verify that the middleware switches from 200 to 429 on the 11th request and sends back the expected headers.
 
 ---
 
-## 🌐 Round 3: Distributed Redis Backend & Concurrency (Days 35–45)
+## Round 3: Distributed Redis Backend & Concurrency (Days 35–45)
 
-*Tested via `benchmarks/run_redis_benchmark.py` and `tests/test_redis_concurrency.py` (50 concurrent worker threads, limit=10):*
+Tested via `benchmarks/run_redis_benchmark.py` and `tests/test_redis_concurrency.py` (50 concurrent worker threads, limit=10):
 
 | Algorithm Implementation | Storage Backend | Atomicity Model | Throughput (req/s) | 50-Thread Concurrent Stress (Limit=10) | Over-Admission Leak? |
 | :--- | :--- | :--- | :--- | :--- | :--- |
@@ -75,14 +72,15 @@ Tested via `benchmarks/compare_window_boundary.py`:
 | **Leaky Bucket (Lua)** | Redis Hash (`HMGET`/`HMSET`) | **Atomic Lua Script** | **6,310 req/s** | 10 Allowed / 40 Blocked | **Zero (0%)** |
 | **GCRA (Lua)** | Redis String (`GET`/`SET`) | **Atomic Lua Script** | **6,695 req/s** | 10 Allowed / 40 Blocked | **Zero (0%)** |
 
-### Concurrency Deep-Dive: Why Lua Scripting Is Required
-Without atomic Lua scripting, Redis rate limiters (such as Sliding Window Log and Sliding Window Counter) suffer classic **check-then-insert** race conditions. Under a 50-thread concurrent surge, separate reads observe count $< 10$ before any thread executes a write, admitting 18 to 25 requests. Consolidating all logic into atomic Lua scripts (`redis_sliding_window_log.lua`, `redis_sliding_window_counter.lua`, `redis_token_bucket.lua`, and `redis_leaky_bucket.lua`) guarantees strict 0% over-admission across all concurrent runs.
+### Why Lua Scripting Was Necessary
+
+When I tested Redis without Lua scripts using 50 concurrent threads, requests would read the count before another thread had incremented it. As a result, 18 to 25 requests slipped through a limit of 10. Moving the check and increment logic into single Lua scripts ran atomically inside Redis and stopped the leaks.
 
 ---
 
-## 🚀 Round 4: Production Load Testing with Locust (Days 46–50)
+## Round 4: Production Load Testing with Locust (Days 46–50)
 
-*Tested via `loadtests/run_load_tests.py` using Locust 2.47.0 across multi-tenant API traffic:*
+Tested via `loadtests/run_load_tests.py` using Locust 2.47.0 across multi-tenant API traffic:
 
 | Concurrency Tier | Architecture / Backend | Throughput (req/s) | p50 Median (ms) | p95 Latency (ms) | p99 Latency (ms) | Error / Failure Rate (%) | Performance Status |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
@@ -93,13 +91,13 @@ Without atomic Lua scripting, Redis rate limiters (such as Sliding Window Log an
 | **1,000 Users** (Day 49) | Async Redis (`redis.asyncio`) | **1,308.4 req/s** | 120.0 ms | 270.0 ms | 2,200.0 ms | 0.8% | High concurrency plateau |
 | **1,500 Users Stress** (Day 49) | Async Redis (Breaking Point) | **1,420.6 req/s** | 210.0 ms | **2,200.0 ms** | **2,800.0 ms** | **9.9%** | **Capacity Ceiling Exceeded** |
 
+I ran Locust against the gateway with different user counts to see where it saturated. Under 500 concurrent users, the sync Redis client blocked the event loop and increased median latency, whereas the async client stayed responsive.
+
 ---
 
-## 🔬 Round 5: Load Testing II — k6, Spike & Soak Testing (Days 52–56)
+## Round 5: Load Testing with k6, Spike & Soak Testing (Days 52–56)
 
-*Tested via `loadtests/run_week9_tests.py` using k6 v0.56.0 (Go engine) and Locust 2.47.0:*
-
-### Comparative Benchmark Matrix: k6 vs. Locust vs. Spike vs. Soak
+### Benchmark Matrix: k6 vs. Locust vs. Spike vs. Soak
 
 | Test Scenario / Load Pattern | Load Engine | Concurrency Profile | Throughput (req/s) | p50 Median (ms) | p95 Latency (ms) | p99 Latency (ms) | Error / Failure Rate (%) |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
@@ -108,52 +106,30 @@ Without atomic Lua scripting, Redis rate limiters (such as Sliding Window Log an
 | **Instant Spike Shock (Day 54)** | **k6 (Go Engine)** | 10 $\to$ 1,500 VUs instant | **5,509.2 req/s** | 48.3 ms | 234.9 ms | 410.0 ms | **85.5% (TCP Resets)** |
 | **Sustained Soak Test (Day 55)** | **k6 (Go Engine)** | 120 VUs steady-state | **1,134.8 req/s** | **4.2 ms** | **9.6 ms** | **15.2 ms** | **0.0%** |
 
-### 1. Locust vs. k6 Architectural Comparison (Day 53)
-- **Engine Mechanics:**
-  - *Locust* executes Python code on greenlets via Gevent. At 500+ users, Python interpreter overhead and GIL contention consume significant CPU on the load generator machine, introducing measurement jitter.
-  - *k6* is compiled in Go and executes user scripts on the Sobek JavaScript runtime. Lightweight Go goroutines and native non-blocking TCP network sockets allow k6 to generate massive concurrent request rates with minimal client CPU overhead.
-- **Empirical Correlation:** Both tools measured consistent median latency (**18.7 ms** in k6 vs. **19.0 ms** in Locust) under the 500-user ramp. k6 reported higher p95 latency (134.1 ms vs 98.0 ms) because k6's Go scheduler exercises tighter connection recycling and captures micro-burst tail latencies that Python greenlet scheduling occasionally smooths out.
+### Comparing Locust and k6
 
-### 2. Spike Testing & Failure Mode Analysis (Day 54)
-- **The Shock Test:** We subjected RateFortress to an instant traffic step: 10 VUs $\to$ 1,500 VUs within 3 seconds, followed by a sudden drop back to 10 VUs.
-- **Why Instant Spikes Fail Where Gradual Ramps Succeed:**
-  - In a gradual ramp to 500 or 1,000 users, HTTP keep-alive connections are established incrementally over dozens of seconds.
-  - In an instant spike to 1,500 VUs, all 1,500 client threads open new TCP sockets simultaneously within milliseconds. This abruptly exhausts the operating system's TCP listen backlog (`SOMAXCONN`, typically 128 or 512 on standard OS configurations).
-  - Unaccepted connections are dropped with TCP RST or connection timeouts before reaching Uvicorn's ASGI request queue.
-- **Recovery Dynamics:** Once the 1,500-VU spike subsided and traffic returned to baseline (10 VUs), **latency immediately recovered to <5 ms** with zero persistent backlog or memory leakage.
+Locust runs Python code on greenlets. At 500 users, Python CPU usage spiked on my machine and started adding jitter to the measurements. k6 runs compiled Go with lightweight goroutines, generating load without choking the machine.
 
-### 3. Soak Testing & Process Memory Stability (Day 55)
-- **Hypothesis:** Long-running sustained traffic can expose insidious memory leaks (unbounded hash growth in memory, un-evicted sorted set keys in Redis, or leaking connection sockets in connection pools).
-- **Execution:** RateFortress was subjected to sustained continuous load (120 active VUs, 34,163 requests at 1,134.8 req/s) with real-time process monitoring every second (`psutil`).
-- **Empirical Memory Audit:**
-  - **Starting RSS Memory:** 4.49 MB
-  - **Ending RSS Memory:** 4.48 MB
-  - **Net Memory Drift ($\Delta \text{RSS}$):** **-0.01 MB (Completely Flat / Bounded)**
-  - **Thread Count:** Remained constant at exactly 2 threads.
-- **Conclusion:** 100% of RateFortress keys have explicit TTLs, connection pools recycle properly, and no cyclical object references exist, verifying enterprise-grade long-term stability.
+### Spike Test Failures
+
+I pushed an instant spike from 10 to 1,500 virtual users within three seconds to see what would break. The operating system's TCP listen backlog filled up almost instantly, so connection attempts were dropped with TCP resets before reaching Uvicorn. When traffic returned to 10 users, latencies dropped back under 5 ms without lingering issues.
+
+### Soak Testing Memory
+
+I kept 120 virtual users sending requests over a continuous period while tracking process memory with psutil. The process RSS stayed around 4.5 MB throughout the run without drifting up. That confirmed the Redis keys have proper TTLs and the async connection pool does not leak sockets.
 
 ---
 
-## ⚖️ Architectural Constraints & Tradeoffs: In-Memory Load-Shedding vs. Distributed Semaphores
+## Architectural Limits: In-Memory Priority Queue vs Distributed Semaphores
 
-### In-Memory Priority Queue Multi-Worker Boundary
-While the in-memory min-heap priority queue provides microsecond-level scheduling overhead ($O(\log N)$ push/pop) without network round-trips, it operates strictly within single-process boundary space:
-1. **Multi-Worker Scaling Effect (`--workers N`):**
-   - Each Uvicorn worker process maintains an isolated instance of `PriorityRequestQueue` and an independent `_active_requests` counter.
-   - A configured saturation threshold of 100 requests per process with `--workers 2` yields an effective cluster-wide admission ceiling of **200 concurrent requests**.
-2. **Local vs. Global Scheduling Preemption:**
-   - Priority ordering is enforced strictly within each individual worker process. Under uneven load distribution across processes, a paid request held in the priority queue on Worker 1 cannot preempt an incoming free-tier request arriving at Worker 2 if Worker 2 is currently below its local saturation limit.
-3. **Production Path (Week 25 / Chaos-Adjacent Roadmap):**
-   - The architecturally complete resolution for distributed multi-worker topologies is a **Redis-backed distributed semaphore and priority queue** (leveraging Redis Sorted Sets `ZSET` or Redis Streams).
-   - Atomic Lua scripts track active concurrency leases globally, guaranteeing cluster-wide saturation thresholds and globally synchronized priority drainage across horizontal gateway instances.
+The in-memory min-heap priority queue runs in single-digit microseconds, but it only exists within a single worker process. If I run multiple Uvicorn workers, each worker has its own queue and its own active request count.
+
+That means total admission scales with worker count, and a busy worker cannot shed work to an idle worker. To solve that across multiple instances, I would need to move the priority queue and concurrency semaphores into Redis sorted sets.
 
 ---
 
-## 📈 Visual Benchmark Artifacts
+## Visual Benchmark Artifacts
 
-1. **Locust High-Concurrency Matrix (10 to 1,500 Users):**  
-   `loadtests/results/load_test_latency_comparison.png`
-2. **k6 vs. Locust Latency & Throughput Comparison:**  
-   `loadtests/results/k6_vs_locust_comparison.png`
-3. **Soak Test Process Memory Stability (Time-Series):**  
-   `loadtests/results/soak_test_memory_stability.png`
+1. Locust Concurrency Matrix (10 to 1,500 Users): `loadtests/results/load_test_latency_comparison.png`
+2. k6 vs. Locust Latency Comparison: `loadtests/results/k6_vs_locust_comparison.png`
+3. Soak Test Memory Stability: `loadtests/results/soak_test_memory_stability.png`

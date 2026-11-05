@@ -1,8 +1,4 @@
-"""RateFortress Multi-Tenant Admin API (Days 111 & 112).
-
-Provides administrative REST endpoints for issuing, rotating, updating, and revoking API keys,
-monitoring tenant usage, and viewing global system metrics. All endpoints require admin authentication.
-"""
+"""RateFortress Multi-Tenant Admin API (Days 111 & 112)."""
 
 from __future__ import annotations
 
@@ -31,7 +27,6 @@ _admin_key_manager: APIKeyManager | None = None
 
 
 def get_admin_key_manager() -> APIKeyManager:
-    """Returns the shared APIKeyManager bound to the persistent key store."""
     global _admin_key_manager
     if _admin_key_manager is None:
         store = get_key_store()
@@ -40,7 +35,6 @@ def get_admin_key_manager() -> APIKeyManager:
 
 
 def set_admin_key_manager(manager: APIKeyManager) -> None:
-    """Sets the shared APIKeyManager (used in tests or app bootstrapping)."""
     global _admin_key_manager
     _admin_key_manager = manager
 
@@ -49,7 +43,6 @@ def verify_admin_auth(
     x_admin_key: str | None = Header(None, alias="X-Admin-Key"),
     authorization: str | None = Header(None, alias="Authorization"),
 ) -> str:
-    """Enforces admin credential validation using constant-time comparison."""
     expected_key = os.getenv("ADMIN_SECRET_KEY")
     if not expected_key or expected_key == DEFAULT_ADMIN_KEY:
         logger.error(
@@ -125,7 +118,6 @@ def list_keys(
     tier: str | None = None,
     status_filter: str | None = None,
 ) -> dict[str, Any]:
-    """Lists all registered API keys with metadata and masked keys."""
     mgr = get_admin_key_manager()
     all_keys = mgr.list_keys()
 
@@ -145,7 +137,6 @@ def list_keys(
 
 @router.post("/keys", status_code=status.HTTP_201_CREATED, dependencies=[Depends(verify_admin_auth)])
 def issue_key(payload: IssueKeyRequest) -> dict[str, Any]:
-    """Issues a new cryptographically secure API key."""
     mgr = get_admin_key_manager()
     raw_key = mgr.issue_key(
         tier=payload.tier,
@@ -164,7 +155,6 @@ def issue_key(payload: IssueKeyRequest) -> dict[str, Any]:
 
 @router.get("/keys/{key_id}", dependencies=[Depends(verify_admin_auth)])
 def get_key_details(key_id: str) -> dict[str, Any]:
-    """Retrieves metadata for a specific key."""
     mgr = get_admin_key_manager()
     meta = mgr.get_key_metadata(key_id)
     if not meta:
@@ -177,7 +167,6 @@ def get_key_details(key_id: str) -> dict[str, Any]:
 
 @router.patch("/keys/{key_id}", dependencies=[Depends(verify_admin_auth)])
 def update_key(key_id: str, payload: UpdateKeyRequest) -> dict[str, Any]:
-    """Updates tier, rate multiplier, or description for an existing key."""
     mgr = get_admin_key_manager()
     try:
         updated_meta = mgr.update_tier(
@@ -196,7 +185,6 @@ def update_key(key_id: str, payload: UpdateKeyRequest) -> dict[str, Any]:
 
 @router.post("/keys/{key_id}/rotate", dependencies=[Depends(verify_admin_auth)])
 def rotate_key(key_id: str, payload: RotateKeyRequest) -> dict[str, Any]:
-    """Executes zero-downtime key rotation with dual-validity grace period."""
     mgr = get_admin_key_manager()
     try:
         new_key, old_key = mgr.rotate_key(
@@ -222,7 +210,6 @@ def rotate_key(key_id: str, payload: RotateKeyRequest) -> dict[str, Any]:
 
 @router.delete("/keys/{key_id}", dependencies=[Depends(verify_admin_auth)])
 def revoke_key(key_id: str) -> dict[str, Any]:
-    """Immediately revokes an API key."""
     mgr = get_admin_key_manager()
     success = mgr.revoke_key(key_id)
     if not success:
@@ -239,7 +226,6 @@ def revoke_key(key_id: str) -> dict[str, Any]:
 
 @router.get("/keys/{key_id}/usage", dependencies=[Depends(verify_admin_auth)])
 def get_key_usage(key_id: str) -> dict[str, Any]:
-    """Retrieves real-time usage statistics and active rate limit status for a key."""
     mgr = get_admin_key_manager()
     meta = mgr.get_key_metadata(key_id)
     if not meta:
@@ -266,7 +252,6 @@ def get_key_usage(key_id: str) -> dict[str, Any]:
 
 @router.get("/summary", dependencies=[Depends(verify_admin_auth)])
 def get_admin_summary() -> dict[str, Any]:
-    """Returns global administrative telemetry and tenant tier distribution."""
     mgr = get_admin_key_manager()
     summary = mgr.get_summary()
     summary["timestamp"] = time.time()

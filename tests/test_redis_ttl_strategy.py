@@ -1,8 +1,4 @@
-"""Tests for Redis Key TTL and Expiration Strategy (Day 44).
-
-Audits every algorithm implementation to verify that all created Redis keys
-have an active Time-To-Live (TTL > 0), preventing unbounded memory leaks at scale.
-"""
+"""Tests for Redis Key TTL and Expiration Strategy."""
 
 from src.algorithms.redis_fixed_window import RedisFixedWindow
 from src.algorithms.redis_leaky_bucket import RedisLeakyBucket

@@ -1,4 +1,4 @@
-"""Unit and integration tests for RedisGCRA and AsyncRedisGCRA algorithms."""
+"""Tests for RedisGCRA and AsyncRedisGCRA algorithms."""
 
 import concurrent.futures
 import time
@@ -11,7 +11,7 @@ from src.algorithms.redis_gcra import RedisGCRA
 
 
 def test_redis_gcra_burst_and_recovery(redis_client):
-    """Validates RedisGCRA allows bursts up to limit and recovers as time advances."""
+    """Check RedisGCRA allows bursts up to limit and recovers as time advances."""
     limiter = RedisGCRA(redis_client, limit=5, period=5.0)
     user = "redis_gcra_user"
 
@@ -30,7 +30,7 @@ def test_redis_gcra_burst_and_recovery(redis_client):
 
 
 def test_redis_gcra_multi_instance_shared_state(redis_client):
-    """Validates that multiple limiter instances share state via Redis keys."""
+    """Check multiple limiter instances share state via Redis keys."""
     instance_a = RedisGCRA(redis_client, limit=4, period=10.0, namespace="cluster")
     instance_b = RedisGCRA(redis_client, limit=4, period=10.0, namespace="cluster")
     user = "shared_gcra_user"
@@ -52,7 +52,7 @@ def test_redis_gcra_multi_instance_shared_state(redis_client):
 
 
 def test_redis_gcra_key_has_ttl(redis_client):
-    """Validates that GCRA keys always have an explicit TTL set in Redis."""
+    """Check GCRA keys always have an explicit TTL set in Redis."""
     limiter = RedisGCRA(redis_client, limit=5, period=10.0)
     user = "ttl_gcra_user"
     limiter.is_allowed(user)
@@ -63,7 +63,7 @@ def test_redis_gcra_key_has_ttl(redis_client):
 
 
 def test_redis_gcra_concurrent_atomicity(redis_client):
-    """Validates that concurrent threads hammering GCRA strictly respect the limit (zero race conditions)."""
+    """Check concurrent threads hammering GCRA strictly respect the limit (zero race conditions)."""
     limiter = RedisGCRA(redis_client, limit=10, period=60.0)
     user = "concurrent_gcra_user"
 
@@ -87,7 +87,7 @@ def test_redis_gcra_concurrent_atomicity(redis_client):
 
 @pytest.mark.asyncio
 async def test_async_redis_gcra_basic():
-    """Validates AsyncRedisGCRA over redis.asyncio."""
+    """Check AsyncRedisGCRA over redis.asyncio."""
     client = fake_aio.FakeRedis(db=1, decode_responses=True)
     await client.flushdb()
     try:

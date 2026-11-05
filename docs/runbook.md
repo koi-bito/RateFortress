@@ -1,78 +1,66 @@
-# RateFortress — Production Incident Response & Rollback Runbook
-
-This runbook defines the emergency response protocol, severity levels, rapid rollback procedures, and disaster recovery steps for the **RateFortress** distributed rate limiting infrastructure.
-
----
+# RateFortress — Incident Response & Rollback Runbook
 
 ## 1. Incident Severity Classification
 
 | Severity Level | Impact Description | Detection Signal | Target MTTR | Escalation |
 | :--- | :--- | :--- | :--- | :--- |
-| **P1 — Critical** | Gateway down, 100% false-positive 429 throttling on paid/enterprise tenants, Redis complete outage | `RateFortressGatewayDown` alert, `EnterpriseTenantThrottled` alert | **< 5 minutes** | On-call engineer paged immediately |
-| **P2 — High** | Limiter decision latency > 20ms (p95), rate limit leakage under concurrent load, worker memory leak | `LimiterDecisionLatencyHigh` alert, elevated 5xx error rate | **< 15 minutes** | Platform team notified |
-| **P3 — Medium** | Metrics scrape failure, non-critical dashboard panel error, telemetry log shipping lag | Prometheus scrape target down, Loki log lag | **< 2 hours** | Addressed during business hours |
+| P1 — Critical | Gateway down, 100% false-positive 429 throttling on paid/enterprise tenants, Redis complete outage | RateFortressGatewayDown alert, EnterpriseTenantThrottled alert | < 5 minutes | Immediate page |
+| P2 — High | Limiter decision latency > 20ms (p95), rate limit leakage under concurrent load, worker memory leak | LimiterDecisionLatencyHigh alert, elevated 5xx error rate | < 15 minutes | Platform team notified |
+| P3 — Medium | Metrics scrape failure, non-critical dashboard panel error, telemetry log shipping lag | Prometheus scrape target down, Loki log lag | < 2 hours | Business hours |
 
 ---
 
 ## 2. Emergency Rollback Procedures
 
-### Scenario: A bad deployment introduces faulty rate-limiting math or high latency.
+### Scenario: A bad deployment causes high latency or incorrect rate-limiting math.
 
-#### Procedure A: Cloud Platform Instant Rollback (Render / Railway)
-1. **Render.com:**
-   - Navigate to **Dashboard** → **Services** → `ratefortress`.
-   - Click the **Events** / **Deploys** tab.
-   - Locate the previous known-good deployment (e.g., `v-stable-1`).
-   - Click the three dots `...` and select **Rollback to this deploy**.
-   - Render instantly switches the HTTP routing proxy to the previous container image without rebuilding.
-2. **Railway.app:**
-   - Navigate to `ratefortress` project → **Deployments**.
-   - Select the previous stable deployment → **Redeploy**.
+#### Procedure A: Cloud Platform Rollback (Render / Railway)
+1. On Render: Go to Dashboard -> Services -> ratefortress -> Events/Deploys. Select the previous stable deploy and click Rollback to this deploy.
+2. On Railway: Go to Deployments, select the previous stable deployment, and click Redeploy.
 
 ---
 
-#### Procedure B: Blue-Green Cutover Rollback (Zero-Downtime Router)
-If operating a Blue-Green deployment with a traffic router:
-1. Run the instant cutover switch back to the standby Blue environment:
+#### Procedure B: Blue-Green Cutover Rollback
+If running the blue-green deployment router:
+1. Run the cutover script to switch traffic back to the standby instance:
    ```bash
    python scripts/blue_green_deploy.py
    ```
-2. The router atomically updates the active environment pointer in $< 1\text{ ms}$, terminating bad traffic immediately.
+2. The router updates the active pointer in under 1 ms, diverting traffic from the bad instance immediately.
 
-#### Orchestrator Termination Grace Period & Drain Policy (Day 79 & Day 143 Integration)
-During cutover or instance retirement, orchestrators must allow active requests to finish before killing containers:
-- **Measured In-Flight SLA:** $p99 < 2.0\text{ ms}$ for rate evaluation, up to $3.0\text{ s}$ for long-polling / slow endpoints.
-- **Configured Shutdown Grace Period:** **10.0 seconds** (plus 5s safety margin = **15 seconds** orchestrator kill grace).
-- **Kubernetes Pod Spec:**
+#### Container Shutdown & Request Drain Policy
+During cutovers, orchestrators should allow active requests to finish before stopping containers:
+- Configured shutdown grace period: 10.0 seconds (with 15 seconds orchestrator termination grace).
+- Kubernetes pod configuration:
   ```yaml
   spec:
     terminationGracePeriodSeconds: 15
   ```
-- **Docker Compose Spec:**
+- Docker Compose configuration:
   ```yaml
   stop_grace_period: 15s
   ```
-- **Lifecycle Sequence:**
-  1. Traffic router flips live ingress to the Green candidate.
-  2. Orchestrator sends `SIGTERM` to the old Blue container.
-  3. Blue immediately marks `/health/ready` as `503 Service Unavailable`, rejecting any straggler connections with `Retry-After: 5`.
-  4. Blue middleware invokes `drain_in_flight(timeout=10.0)`, allowing executing requests to finish cleanly (0 dropped requests).
-  5. Container exits with code 0 once `_active_requests == 0`. Orchestrator only issues `SIGKILL` if in-flight requests exceed 15s.
+- Lifecycle flow:
+  1. Traffic router flips live ingress to the standby container.
+  2. Orchestrator sends SIGTERM to the old container.
+  3. The old instance sets `/health/ready` to return 503 with `Retry-After: 5` for any straggler requests.
+  4. Middleware runs `drain_in_flight(timeout=10.0)`, allowing current requests to complete cleanly.
+  5. Container exits with code 0 once all active requests finish.
 
 ---
 
-#### Procedure C: Docker Compose Rollback (EC2 / Bare Metal)
-1. SSH into the production host:
+#### Procedure C: Docker Compose Rollback (VM)
+1. SSH into the server:
    ```bash
    ssh -i ~/.ssh/id_rsa ubuntu@ratefortress-prod.yourdomain.com
    cd /opt/ratefortress
    ```
-2. Revert to the previous stable release tag:
+2. Check out the previous stable tag:
    ```bash
    git fetch --tags
    git checkout v-stable-1
    ```
-3. Restart the application container with zero downtime for Redis:
+3. Rebuild and restart the application container without restarting Redis:
    ```bash
    sudo docker compose up -d --no-deps --build ratefortress
    ```
@@ -83,37 +71,31 @@ During cutover or instance retirement, orchestrators must allow active requests 
 
 ---
 
-#### Procedure D: Git Revert (CI/CD Pipeline Rollback)
-1. Identify the offending commit hash:
+#### Procedure D: Git Revert (CI/CD Rollback)
+1. Find the bad commit hash:
    ```bash
    git log -n 5 --oneline
    ```
-2. Revert the commit and push directly to `main`:
+2. Revert the commit and push to main:
    ```bash
    git revert <bad-commit-hash> --no-edit
    git push origin main
    ```
-3. GitHub Actions CI/CD pipeline triggers automated tests and auto-deploys the clean commit.
+3. GitHub Actions runs the test suite and auto-deploys the clean commit.
 
 ---
 
-## 3. Redis Disaster Recovery & Split-Brain Mitigation
+## 3. Redis Disaster Recovery & Troubleshooting
 
-### 1. Redis Failure / Unreachable Backend
-- **Fail-Open Circuit Breaker:**
-  RateFortress includes a built-in `CircuitBreaker` in `src/middleware/circuit_breaker.py`. When Redis connectivity fails or times out:
-  - The circuit trips to **OPEN**.
-  - All rate limiter checks safely **fail-open** (allow traffic to proceed rather than returning 500 errors).
-  - Metrics record `ratefortress_circuit_breaker_state{state="open"}`.
-  - Paying customers experience zero downtime while engineers restore Redis.
+### 1. Redis Unreachable
+When Redis connectivity drops or times out:
+- The circuit breaker in `src/middleware/circuit_breaker.py` trips to OPEN after 5 failures.
+- Checks fail open, allowing traffic through rather than returning 500 errors to users.
+- Metrics record `ratefortress_circuit_breaker_state{state="open"}` and warnings are logged.
 
-### 2. Purging Corrupted or Stale Rate Limit Keys
-If bad code populated erroneous quotas or corrupted TTL values, purge only transient rate limiting keys without impacting permanent tenant settings:
+### 2. Clearing Stale or Corrupted Rate Limit Keys
+If a bug generates invalid keys or bad TTLs, purge only rate limit keys without affecting other data:
 ```bash
-# Connect to Redis CLI
-redis-cli -h $REDIS_HOST -p $REDIS_PORT
-
-# Safely evict transient rate limiting keys by pattern
 redis-cli --scan --pattern "route_*" | xargs redis-cli del
 redis-cli --scan --pattern "fixed_window:*" | xargs redis-cli del
 redis-cli --scan --pattern "sliding_log:*" | xargs redis-cli del
@@ -126,20 +108,15 @@ redis-cli --scan --pattern "leaky_bucket:*" | xargs redis-cli del
 
 ## 4. Post-Incident Verification Checklist
 
-After executing any rollback or disaster recovery procedure:
-
-- [ ] **Run Live Smoke Test:**
+After running a rollback:
+- Run smoke test:
   ```bash
   python scripts/smoke_test_deployment.py --url https://ratefortress.yourdomain.com
   ```
-- [ ] **Confirm /health returns 200 OK:**
+- Check health status:
   ```bash
   curl -I https://ratefortress.yourdomain.com/health
   ```
-- [ ] **Verify Prometheus Telemetry:**
-  Confirm Prometheus is actively scraping `/metrics` and latency quantiles (p50, p95, p99) return to nominal sub-millisecond levels.
-- [ ] **Verify Grafana Dashboard:**
-  Inspect the `RateFortress Overview` dashboard for normal throughput curves (HTTP 200 vs. nominal 429 drops).
-- [ ] **Document Postmortem:**
-  Record timeline, root cause, blast radius, time to rollback, and preventative engineering changes.
-
+- Check Prometheus `/metrics` to verify scrape targets are green and latencies have normalized.
+- Inspect the Grafana overview dashboard to confirm normal request rates and 429 distributions.
+- Note what broke, how it was detected, and what needs fixing in tests.

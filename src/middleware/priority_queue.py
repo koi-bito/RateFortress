@@ -1,10 +1,4 @@
-"""Tiered Priority Request Queue for RateFortress.
-
-Implements an in-memory priority queue using a min-heap (heapq).
-During system overload or constrained worker capacity, higher-priority requests
-(e.g., enterprise=0, paid=1) are drained and processed before lower-priority ones
-(e.g., free=2, anonymous=3).
-"""
+"""Tiered Priority Request Queue for RateFortress."""
 
 import heapq
 import itertools
@@ -25,28 +19,15 @@ class PriorityRequestQueue:
         self._counter = itertools.count()  # Strict FIFO ordering for equal priority
 
     def push(self, priority: int, request_id: str, payload: Any = None) -> None:
-        """Pushes a request into the priority queue.
-
-        Args:
-            priority: Scheduling priority (lower number = higher priority).
-            request_id: Unique identifier for the incoming request.
-            payload: Optional metadata or request context.
-        """
         entry = (priority, next(self._counter), request_id, payload)
         heapq.heappush(self.heap, entry)
 
     def pop(self) -> tuple[int, int, str, Any] | None:
-        """Pops and returns the highest-priority request (lowest priority integer).
-
-        Returns:
-            Tuple of (priority, sequence, request_id, payload), or None if empty.
-        """
         if self.heap:
             return heapq.heappop(self.heap)
         return None
 
     def peek(self) -> tuple[int, int, str, Any] | None:
-        """Peeks at the next request without removing it."""
         if self.heap:
             return self.heap[0]
         return None

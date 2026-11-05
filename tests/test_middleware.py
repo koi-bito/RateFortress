@@ -1,4 +1,4 @@
-"""Integration tests for FastAPI application and RateLimitMiddleware."""
+"""Tests for FastAPI application and RateLimitMiddleware."""
 
 from fastapi.testclient import TestClient
 
@@ -12,7 +12,7 @@ def test_root_and_headers_present():
     assert response.status_code == 200
     assert response.json()["service"] == "RateFortress"
 
-    # Validate rate limit headers exist on standard 200 OK responses
+    # Check rate limit headers exist on standard 200 OK responses
     assert "X-RateLimit-Limit" in response.headers
     assert "X-RateLimit-Remaining" in response.headers
     assert "Retry-After" not in response.headers  # RFC 6585/7231: Retry-After absent on 200 OK

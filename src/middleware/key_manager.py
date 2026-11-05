@@ -1,9 +1,4 @@
-"""API Key Management, Constant-Time Verification & Zero-Downtime Rotation (Days 96 & 112).
-
-Provides cryptographically secure key generation, timing-attack resistant verification
-using hmac.compare_digest, dual-validity grace periods for seamless key rotation,
-and optional persistence via KeyStore (Redis/Memory).
-"""
+"""API Key Management, Constant-Time Verification & Zero-Downtime Rotation (Days 96 & 112)."""
 
 from __future__ import annotations
 
@@ -20,7 +15,6 @@ logger = logging.getLogger("ratefortress.middleware.key_manager")
 
 
 def mask_key(api_key: str) -> str:
-    """Masks a secret key for safe logging, exposing only first 4 and last 3 characters."""
     if not api_key:
         return ""
     if len(api_key) <= 8:
@@ -41,12 +35,10 @@ class KeyMetadata:
     status: str = "active"  # "active", "rotating", "revoked"
 
     def to_dict(self) -> dict[str, Any]:
-        """Serializes metadata to dictionary representation."""
         return asdict(self)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> KeyMetadata:
-        """Constructs KeyMetadata from dictionary."""
         return cls(
             key_id=data["key_id"],
             tier=data.get("tier", "free"),
@@ -107,7 +99,6 @@ class APIKeyManager:
         prefix: str = "rf",
         custom_key_id: str | None = None,
     ) -> str:
-        """Generates a new cryptographically secure 256-bit API key."""
         if custom_key_id:
             key = custom_key_id
         else:
@@ -129,11 +120,6 @@ class APIKeyManager:
         return key
 
     def rotate_key(self, old_key: str, grace_period_sec: int = 3600) -> tuple[str, str]:
-        """Performs zero-downtime key rotation.
-
-        Issues a new active key and assigns an expiration grace period to old_key,
-        allowing clients to migrate without service disruption.
-        """
         old_meta = self.get_key_metadata(old_key)
         if not old_meta:
             raise ValueError(f"Key {mask_key(old_key)} does not exist.")
@@ -162,7 +148,6 @@ class APIKeyManager:
         limit_multiplier: int | None = None,
         description: str | None = None,
     ) -> KeyMetadata:
-        """Updates tier configuration or metadata for an existing key."""
         meta = self.get_key_metadata(key)
         if not meta:
             raise ValueError(f"Key {mask_key(key)} does not exist.")
@@ -180,7 +165,6 @@ class APIKeyManager:
         return meta
 
     def revoke_key(self, key: str) -> bool:
-        """Immediately revokes an API key."""
         meta = self._keys.get(key)
         if meta:
             meta.status = "revoked"
@@ -192,7 +176,6 @@ class APIKeyManager:
         return False
 
     def verify_key(self, candidate_key: str) -> KeyMetadata | None:
-        """Validates candidate_key using O(1) dictionary lookup with store fallback."""
         if not candidate_key:
             return None
 
@@ -223,13 +206,11 @@ class APIKeyManager:
         return matched_meta
 
     def start_invalidation_listener(self) -> Any:
-        """Starts background listener for key invalidations via pub/sub."""
         if self.key_store is not None:
             return self.key_store.subscribe_invalidation(self.handle_invalidation)
         return None
 
     def handle_invalidation(self, message: str) -> None:
-        """Invalidates local cache entry or reloads all keys."""
         if message == "__reload__":
             if self.key_store is not None:
                 records = self.key_store.list_all()
@@ -247,7 +228,6 @@ class APIKeyManager:
         return self._keys.get(key)
 
     def list_keys(self) -> list[KeyMetadata]:
-        """Returns all keys sorted by creation date."""
         return sorted(self._keys.values(), key=lambda m: m.created_at, reverse=True)
 
     def active_keys_count(self) -> int:
@@ -259,7 +239,6 @@ class APIKeyManager:
         return count
 
     def get_summary(self) -> dict[str, Any]:
-        """Returns aggregate summary of registered keys and tier breakdown."""
         now = time.time()
         active = 0
         rotating = 0

@@ -1,9 +1,4 @@
-"""Concurrency and atomicity stress tests for Redis-backed rate limiters (Day 42).
-
-Fires simultaneous concurrent requests via ThreadPoolExecutor against the same user key
-to verify that Redis atomic operations (INCR) and Lua scripts prevent race conditions,
-guaranteeing that EXACTLY the configured limit is admitted with zero over-admission.
-"""
+"""Concurrency and atomicity stress tests for Redis-backed rate limiters."""
 
 import asyncio
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -41,7 +36,7 @@ def _fire_concurrent_requests(
 
 
 def test_concurrent_fixed_window_atomicity(redis_client):
-    """Verifies RedisFixedWindow INCR atomic operation allows EXACTLY limit requests."""
+    """Check RedisFixedWindow INCR atomic operation allows EXACTLY limit requests."""
     limit = 10
     limiter = RedisFixedWindow(redis_client, limit=limit, window_seconds=10)
     user = "user_concurrent_rfw"
@@ -54,7 +49,7 @@ def test_concurrent_fixed_window_atomicity(redis_client):
 
 
 def test_concurrent_token_bucket_lua_atomicity(redis_client):
-    """Verifies RedisTokenBucket Lua script atomicity admits EXACTLY capacity requests."""
+    """Check RedisTokenBucket Lua script atomicity admits EXACTLY capacity requests."""
     capacity = 10
     limiter = RedisTokenBucket(
         redis_client, capacity=capacity, refill_rate_per_sec=0.01
@@ -69,7 +64,7 @@ def test_concurrent_token_bucket_lua_atomicity(redis_client):
 
 
 def test_concurrent_leaky_bucket_lua_atomicity(redis_client):
-    """Verifies RedisLeakyBucket Lua script atomicity admits EXACTLY capacity requests."""
+    """Check RedisLeakyBucket Lua script atomicity admits EXACTLY capacity requests."""
     capacity = 10
     limiter = RedisLeakyBucket(redis_client, capacity=capacity, leak_rate_per_sec=0.01)
     user = "user_concurrent_rlb"
@@ -82,7 +77,7 @@ def test_concurrent_leaky_bucket_lua_atomicity(redis_client):
 
 
 def test_concurrent_sliding_window_log_lua_atomicity(redis_client):
-    """Verifies Lua-scripted RedisSlidingWindowLog admits EXACTLY limit requests."""
+    """Check Lua-scripted RedisSlidingWindowLog admits EXACTLY limit requests."""
     limit = 10
     limiter = RedisSlidingWindowLog(redis_client, limit=limit, window_seconds=10)
     user = "user_concurrent_rswl"
@@ -95,7 +90,7 @@ def test_concurrent_sliding_window_log_lua_atomicity(redis_client):
 
 
 def test_concurrent_sliding_window_counter_lua_atomicity(redis_client):
-    """Verifies RedisSlidingWindowCounter Lua script atomicity admits EXACTLY limit requests."""
+    """Check RedisSlidingWindowCounter Lua script atomicity admits EXACTLY limit requests."""
     limit = 10
     limiter = RedisSlidingWindowCounter(redis_client, limit=limit, window_seconds=10)
     user = "user_concurrent_rswc"
@@ -109,7 +104,7 @@ def test_concurrent_sliding_window_counter_lua_atomicity(redis_client):
 
 @pytest.mark.asyncio
 async def test_concurrent_async_sliding_window_counter_atomicity():
-    """Verifies AsyncRedisSlidingWindowCounter Lua script atomicity under 50 concurrent async tasks."""
+    """Check AsyncRedisSlidingWindowCounter Lua script atomicity under 50 concurrent async tasks."""
     server = get_shared_fake_server()
     client = fake_aio.FakeRedis(server=server, db=2, decode_responses=True)
     await client.flushdb()
@@ -130,7 +125,7 @@ async def test_concurrent_async_sliding_window_counter_atomicity():
 
 @pytest.mark.asyncio
 async def test_sync_and_async_sliding_window_counter_share_state(redis_client):
-    """Verifies sync and async Sliding Window Counter use identical key prefixes and share state."""
+    """Check sync and async Sliding Window Counter use identical key prefixes and share state."""
     server = get_shared_fake_server()
     async_client = fake_aio.FakeRedis(server=server, db=1, decode_responses=True)
 

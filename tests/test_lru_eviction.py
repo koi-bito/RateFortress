@@ -1,4 +1,4 @@
-"""Tests for LRU cache eviction in pure-Python rate limiters (Fix 14)."""
+"""Tests for LRU cache eviction in pure-Python rate limiters."""
 
 from src.algorithms.fixed_window import FixedWindowCounter
 from src.algorithms.gcra import GCRA

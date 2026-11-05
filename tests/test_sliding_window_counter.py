@@ -41,7 +41,7 @@ def test_invalid_inputs():
 
 
 def test_weighted_boundary_decay():
-    # Test with synthetic time mock to verify the exact mathematical weighting
+    # Test with synthetic time mock to check the exact mathematical weighting
     from unittest.mock import patch
 
     limiter = SlidingWindowCounter(limit=10, window_seconds=10)

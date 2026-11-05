@@ -1,11 +1,4 @@
-"""Circuit Breaker pattern for RateFortress resilience.
-
-Wraps backend state lookups and limiter executions. If repeated failures occur
-(e.g., Redis connection drops, storage timeout, network partition), the circuit
-trips to 'open' and executes the configured resilience policy:
-- Fail Open (default for RateFortress): Allows requests through to preserve API availability.
-- Fail Closed: Blocks requests to guarantee limit compliance at the expense of availability.
-"""
+"""Circuit Breaker pattern for RateFortress resilience."""
 
 import time
 from collections.abc import Callable
@@ -13,13 +6,7 @@ from typing import Any
 
 
 class CircuitBreaker:
-    """Stateful circuit breaker with Closed, Open, and Half-Open states.
-
-    Attributes:
-        failure_threshold: Consecutive errors before tripping the breaker open.
-        recovery_timeout: Time in seconds to wait before probing recovery (half-open).
-        fail_open: When True, fallback returns True (request allowed) on failures.
-    """
+    """Stateful circuit breaker with Closed, Open, and Half-Open states."""
 
     STATE_CLOSED = "closed"
     STATE_OPEN = "open"
@@ -45,16 +32,6 @@ class CircuitBreaker:
         self.opened_at: float | None = None
 
     def call(self, func: Callable, *args, fallback: Any | None = None, **kwargs) -> Any:
-        """Executes func with circuit breaker protection.
-
-        Args:
-            func: Target callable to execute.
-            fallback: Value returned when circuit is OPEN or func raises an exception.
-                      Defaults to self.fail_open.
-
-        Returns:
-            Result of func(*args, **kwargs), or fallback if open/failed.
-        """
         effective_fallback = self.fail_open if fallback is None else fallback
         now = time.time()
 
@@ -93,16 +70,6 @@ class CircuitBreaker:
     async def async_call(
         self, func: Callable, *args, fallback: Any | None = None, **kwargs
     ) -> Any:
-        """Executes an async coroutine function with circuit breaker protection.
-
-        Args:
-            func: Target async coroutine function to await.
-            fallback: Value returned when circuit is OPEN or func raises an exception.
-                      Defaults to self.fail_open.
-
-        Returns:
-            Result of await func(*args, **kwargs), or fallback if open/failed.
-        """
         effective_fallback = self.fail_open if fallback is None else fallback
         now = time.time()
 
@@ -139,7 +106,6 @@ class CircuitBreaker:
             return effective_fallback
 
     def reset(self) -> None:
-        """Manually resets the circuit breaker to closed state."""
         self.state = self.STATE_CLOSED
         self.failures = 0
         self.opened_at = None

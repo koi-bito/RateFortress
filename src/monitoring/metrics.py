@@ -1,9 +1,4 @@
-"""Prometheus Metrics Instrumentation for RateFortress (Week 10).
-
-Provides standardized Prometheus metric primitives (Counters, Histograms, and Gauges)
-for end-to-end request tracking, rate limiting evaluation overhead, and blocked
-request monitoring across client pricing tiers and algorithms.
-"""
+"""Prometheus Metrics Instrumentation for RateFortress (Week 10)."""
 
 import os
 
@@ -80,10 +75,6 @@ ACTIVE_REQUESTS = Gauge(
 
 
 def get_metrics_payload() -> tuple[bytes, str]:
-    """Generates the latest Prometheus-formatted metrics payload.
-
-    If PROMETHEUS_MULTIPROC_DIR is configured, aggregates multi-worker counters.
-    """
     multiproc_dir = os.getenv("PROMETHEUS_MULTIPROC_DIR")
     if multiproc_dir and os.path.isdir(multiproc_dir):
         registry = CollectorRegistry()

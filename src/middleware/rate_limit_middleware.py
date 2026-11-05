@@ -1,13 +1,4 @@
-"""FastAPI / Starlette Rate Limiting Middleware for RateFortress.
-
-Inspects incoming HTTP requests, resolves client identity (via API Key or IP),
-matches hierarchical endpoint rules using an EndpointTrie, enforces rate quotas,
-protects against backend crashes via CircuitBreaker fail-open resilience,
-and attaches standard rate limit headers (X-RateLimit-Limit, Remaining, Retry-After).
-
-Supports both synchronous and non-blocking asynchronous Redis algorithms,
-preventing event loop thread blocking under high concurrent loads.
-"""
+"""FastAPI / Starlette Rate Limiting Middleware for RateFortress."""
 
 import asyncio
 import inspect
@@ -66,35 +57,13 @@ TIER_PRIORITY_MAP: dict[str, int] = {
 
 
 def format_compound_key(api_key: str | None, endpoint: str, ip: str) -> str:
-    """Formats a multi-dimensional compound rate limiting key combining identity, route, and network IP.
-
-    Format: {api_key or 'anon'}:{endpoint}:{ip}
-    """
     key_part = api_key or "anon"
     clean_endpoint = endpoint.strip("/").replace("/", "_") or "root"
     return f"{key_part}:{clean_endpoint}:{ip}"
 
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
-    """Production rate limiting middleware for ASGI applications.
-
-    Attributes:
-        app: The ASGI application callable.
-        default_limiter: Optional global fallback limiter instance.
-        rules: Mapping from route paths to EndpointRule configurations.
-        api_keys: Registered API keys with tier multipliers.
-        circuit_breaker: CircuitBreaker instance for fail-open resilience.
-        redis_client: Optional sync Redis client for distributed state synchronization.
-        async_redis_client: Optional async Redis client for non-blocking event loop execution.
-        priority_queue: PriorityRequestQueue instance for load shedding and tier prioritization.
-        saturation_threshold: Concurrent in-flight request threshold before queuing/shedding triggers.
-        max_queue_depth: Maximum requests held in the priority queue before dropping.
-        queue_timeout: Maximum seconds a prioritized request will wait in queue before timing out.
-        shed_free_tier: Whether free-tier requests are shed immediately under saturation.
-        global_ip_limit: Global rate limit quota across all endpoints per IP (Day 141 compound key).
-        global_ip_window: Window duration in seconds for global per-IP limiting.
-        global_ip_algorithm: Algorithm used for global per-IP limiting.
-    """
+    """rate limiting middleware for ASGI applications."""
 
     def __init__(
         self,
@@ -218,7 +187,6 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         self._limiter_cache: dict[str, Any] = {}
 
     def _create_global_ip_limiter(self) -> Any:
-        """Instantiates the global per-IP limiter matching the active storage backend."""
         if not self.global_ip_limit:
             return None
 
@@ -308,7 +276,6 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                 return FixedWindowCounter(limit=limit, window_seconds=win)
 
     def _resolve_ip(self, request: Request) -> str:
-        """Resolves client IP with anti-spoofing trusted proxy validation."""
         peer_ip = request.client.host if request.client else "unknown_client"
         forwarded_for = request.headers.get("x-forwarded-for")
         return resolve_client_ip(
@@ -318,10 +285,6 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         )
 
     def _get_client_identity(self, request: Request) -> tuple[str, str, int]:
-        """Resolves (client_id, tier, limit_multiplier).
-
-        Checks X-API-Key header first; falls back to client IP.
-        """
         api_key = request.headers.get("x-api-key")
         if api_key:
             if self.key_manager is not None:
@@ -498,7 +461,6 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             return 1
 
     def _release_slot(self) -> None:
-        """Releases an active request slot and admits the highest-priority queued waiter."""
         self._active_requests = max(0, self._active_requests - 1)
         while not self.priority_queue.is_empty():
             entry = self.priority_queue.pop()
@@ -518,7 +480,6 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         retry_after: int = 1,
         detail: str = "System is saturated. Request shed.",
     ) -> JSONResponse:
-        """Constructs an RFC-compliant HTTP 503 response for shed requests."""
         headers = {
             "X-RateLimit-Limit": str(nominal_limit),
             "X-RateLimit-Remaining": "0",
@@ -547,7 +508,6 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         )
 
     async def drain_in_flight(self, timeout: float = 10.0, poll_interval: float = 0.05) -> bool:
-        """Waits for active in-flight requests to complete up to timeout."""
         deadline = time.time() + timeout
         while self._active_requests > 0:
             if time.time() >= deadline:

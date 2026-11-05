@@ -1,1 +1,1 @@
-"""Test suite for RateFortress."""
+"""Tests for RateFortress."""

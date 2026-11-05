@@ -8,7 +8,7 @@ from src.algorithms.gcra import GCRA
 
 
 def test_allows_up_to_limit():
-    """Validates that a fresh client can burst up to the configured limit."""
+    """Check a fresh client can burst up to the configured limit."""
     limiter = GCRA(limit=5, period=10.0)
     for _ in range(5):
         assert limiter.is_allowed("user1") is True
@@ -18,7 +18,7 @@ def test_allows_up_to_limit():
 
 
 def test_refill_and_recovery_over_time():
-    """Validates that cell arrival allowance recovers as time elapses."""
+    """Check cell arrival allowance recovers as time elapses."""
     limiter = GCRA(limit=3, period=3.0)  # 1 request per second
     assert limiter.is_allowed("user1") is True
     assert limiter.is_allowed("user1") is True
@@ -33,7 +33,7 @@ def test_refill_and_recovery_over_time():
 
 
 def test_retry_after_and_remaining():
-    """Validates accurate calculation of remaining capacity and Retry-After delay."""
+    """Check accurate calculation of remaining capacity and Retry-After delay."""
     limiter = GCRA(limit=4, period=4.0)
     assert limiter.get_remaining("user1") == 4
     assert limiter.get_retry_after("user1") == 0
@@ -53,7 +53,7 @@ def test_retry_after_and_remaining():
 
 
 def test_multi_cost_consumption():
-    """Validates consumption of multiple cell units in a single call."""
+    """Check consumption of multiple cell units in a single call."""
     limiter = GCRA(limit=5, period=10.0)
     # Consuming 3 out of 5 cells
     assert limiter.is_allowed("user1", cost=3) is True
@@ -66,7 +66,7 @@ def test_multi_cost_consumption():
 
 
 def test_independent_per_user():
-    """Validates that different clients have completely isolated rate limits."""
+    """Check different clients have completely isolated rate limits."""
     limiter = GCRA(limit=2, period=10.0)
     assert limiter.is_allowed("alice") is True
     assert limiter.is_allowed("alice") is True
@@ -79,7 +79,7 @@ def test_independent_per_user():
 
 
 def test_invalid_inputs():
-    """Validates ValueError raised on invalid parameter initialization."""
+    """Check ValueError raised on invalid parameter initialization."""
     with pytest.raises(ValueError):
         GCRA(limit=0, period=10.0)
     with pytest.raises(ValueError):

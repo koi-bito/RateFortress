@@ -1,7 +1,4 @@
-"""Asynchronous Redis-backed GCRA rate limiting algorithm using atomic Lua scripting.
-
-Guarantees full atomicity across distributed application instances executing on redis.asyncio.
-"""
+"""Asynchronous Redis-backed GCRA rate limiting algorithm using atomic Lua scripting."""
 
 from __future__ import annotations
 
@@ -42,7 +39,6 @@ class AsyncRedisGCRA:
         return f"gcra:{self.namespace}:{user_id}"
 
     async def is_allowed(self, user_id: str, cost: int = 1) -> bool:
-        """Evaluates whether user_id is permitted to consume `cost` units asynchronously."""
         if cost <= 0:
             raise ValueError("Requested cost must be positive.")
 
@@ -61,7 +57,6 @@ class AsyncRedisGCRA:
         return bool(res[0])
 
     async def remaining(self, user_id: str) -> int:
-        """Returns remaining permitted requests without consuming quota."""
         key = self._key(user_id)
         now = time.time()
         res = await self._script(
@@ -77,11 +72,9 @@ class AsyncRedisGCRA:
         return int(res[1])
 
     async def get_remaining(self, user_id: str) -> int:
-        """Alias for `remaining`."""
         return await self.remaining(user_id)
 
     async def retry_after(self, user_id: str) -> int:
-        """Returns seconds until next cell request is permitted."""
         key = self._key(user_id)
         now = time.time()
         res = await self._script(
@@ -97,11 +90,9 @@ class AsyncRedisGCRA:
         return int(res[2])
 
     async def get_retry_after(self, user_id: str) -> int:
-        """Alias for `retry_after`."""
         return await self.retry_after(user_id)
 
     @property
     def limit(self) -> int:
-        """Returns the nominal capacity/limit."""
         return self.limit_val
 

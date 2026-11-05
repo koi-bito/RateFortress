@@ -1,869 +1,426 @@
-# RateFortress — Daily Engineering Log & Learnings
+# RateFortress : Daily Engineering Log & Learnings
 
-A structured record of architectural decisions, DSA insights, failure modes, and lessons learned across the 29-week engineering roadmap.
-
----
-
-## 📅 Week 0 — Foundations (Days 1–5)
-
-### Day 1 — Why Rate Limiting Exists
-- **Core Concept:** Rate limiting protects services from denial of service (DoS), cascading downstream failures, brute-force/credential-stuffing attacks, and unfair resource monopolization ("noisy neighbors" in multi-tenant environments).
-- **Two Concrete Scenarios Without Rate Limiting:**
-  1. *Resource Exhaustion / Database Crash:* An unthrottled search or analytics endpoint receiving 10,000 requests/sec will saturate database connection pools and CPU, knocking the entire application offline for all legitimate users.
-  2. *Economic / Free-Tier Exploitation:* Attackers can script automated accounts to spam free-tier generative AI endpoints or SMS verification services, running up thousands of dollars in third-party API bills in minutes.
-
-### Day 2 — The Five Core Algorithms
-- **Payments API vs. Search Autocomplete:**
-  - *Payments API:* **Token Bucket** or **Sliding Window Log**. Payments cannot tolerate boundary bursts that overwhelm banking settlement gateways, but users should never face silent drops; Token Bucket allows small bursts while strictly metering the steady-state refill rate.
-  - *Search Autocomplete:* **Sliding Window Counter** or **Fixed Window Counter**. Search suggestions require ultra-low latency (<5ms) and high throughput. An approximation like Sliding Window Counter has $O(1)$ memory, negligible CPU overhead, and dropping a stray keystroke is acceptable compared to adding latency to query evaluation.
-
-### Day 3 — DSA: Hashmaps, Deques & Circular Buffers
-- **Why `collections.deque` over `list`:** A standard Python `list` is a dynamic array. Popping an element from the front (`list.pop(0)`) requires shifting all remaining $n-1$ elements in memory, yielding $O(n)$ time complexity per eviction. For a sliding window log handling high request volume, $O(n)$ evictions destroy performance. `collections.deque` is implemented as a doubly linked block list, providing true $O(1)$ amortized `popleft()` and `append()`.
-
-### Day 4 — DSA: Heaps & Consistent Hashing
-- **Min-Heaps vs. Sorted Lists:** A min-heap provides $O(\log n)$ insertion and $O(1)$ peek ($O(\log n)$ pop) for priority operations. Maintaining a sorted list requires $O(n)$ insertion time. For dynamic priority queues, a min-heap scales efficiently.
-
-### Day 5 — Project Scoping & Manual Simulation
-- **Algorithm Differences Under Boundary Bursts:** Simulating 5 requests / 10s window at boundary $t=9, 10$: Fixed Window allows 5 requests at $t=9$ and another 5 at $t=10$ (10 requests in 2 seconds = 2x limit spike). Sliding Window Log and Sliding Window Counter both detect the rolling 10-second footprint and reject the boundary burst.
+A personal log tracking architectural decisions, bugs, and lessons learned while building RateFortress.
 
 ---
 
-## 📅 Week 1 — Environment Setup & Project Scaffold (Days 6–10)
+## Week 0 : Foundations (Days 1-5)
 
-### Day 6 — Modular Architecture Separation
-- **Why separate `algorithms/`, `middleware/`, and `api/`:** Clean separation of concerns allows testing pure algorithmic logic in isolation, swappable storage engines, and embedding limiters into any ASGI/gRPC middleware without rewriting business logic.
+### Day 1 : Why Rate Limiting Exists
+I spent way too long reading about API outages before writing anything. If you do not rate limit, an unindexed database query hit 10,000 times a second just brings down the whole stack. Or someone scripts your free trial and runs up a huge bill before morning.
 
-### Day 7 — Commit Message Conventions
-- **Standard Convention Adopted:** `feat:`, `test:`, `perf:`, `refactor:`, `docs:`, `fix:`, `ci:`.
+### Day 2 : The Five Core Algorithms
+Looked at the five classic algorithms. Payments need something like Token Bucket or Sliding Window Log because money transactions cannot have surprise spikes. For search autocomplete, Sliding Window Counter makes way more sense because dropping a keystroke is fine, but adding latency is not.
 
-### Day 8 — Test-Driven Development (TDD)
-- **Why Write Tests First:** Establishes clear boundary conditions (limit - 1, limit, limit + 1, rollover resets) before asynchronous HTTP concurrency complicates debugging.
+### Day 3 : DSA: Hashmaps, Deques & Circular Buffers
+Took me a while to realize why a Python list pop(0) is so bad here. Shifting all elements in memory every single time you evict an old timestamp kills performance. Switched my thinking to collections.deque, which gives O(1) pops from the left.
 
-### Day 9 — Unified Benchmark Harness
-- **Why a Single Benchmark Harness:** Ensures unbiased, apples-to-apples comparisons by isolating algorithmic data structures as the sole independent variable.
+### Day 4 : DSA: Heaps & Consistent Hashing
+Min-heaps give O(log n) inserts and O(1) peek, which I used for prioritizing requests under heavy load. Consistent hashing is how keys get spread across multiple storage nodes without reshuffling everything.
 
-### Day 10 — Week 1 Review
-- **Reflection:** Scaffolded core directory structure, configured isolated Python virtual environment, integrated pytest, established baseline benchmark harness, and validated clean code formatting.
-
----
-
-## 📅 Week 2 — Fixed Window & Sliding Window Log (Days 11–15)
-
-### Day 11 — Fixed Window Counter Mechanics
-- **The Boundary Burst Problem:** Fixed Window evaluates `current_window = int(now // window_seconds)`. Traffic clustered at window boundaries allows up to $2 \times \text{limit}$ in a rolling window of length $T$.
-- **Complexity:** $O(1)$ time, $O(1)$ memory per client.
-
-### Day 12 — Testing & Benchmarking Fixed Window
-- **Throughput:** Achieved **~2.82M req/s** in in-memory pure Python.
-
-### Day 13 — Sliding Window Log Mechanics
-- **Precision with Deques:** Sliding Window Log records timestamps in a `collections.deque`. Timestamps $\le \text{now} - \text{window}$ are popped from the left.
-- **Tradeoff:** Storing every timestamp consumes $O(N)$ memory per active client.
-
-### Day 14 — Testing & Benchmarking Sliding Window Log
-- **Throughput:** Achieved **~3.47M req/s** in in-memory pure Python.
-
-### Day 15 — Empirical Comparison (Fixed Window vs. Sliding Window Log)
-- **Script Evidence:** `benchmarks/compare_window_boundary.py` verified that with limit=5/10s, Fixed Window leaked 10/10 requests while Sliding Window Log blocked requests 6 through 10.
+### Day 5 : Project Scoping & Manual Simulation
+Drew out the boundary problem on paper. If a user sends five requests at second 9 and five requests at second 10 on a 10-second window, Fixed Window lets all 10 through. That is double the limit. Seeing it visually made the problem obvious.
 
 ---
 
-## 📅 Week 3 — Sliding Window Counter, Token Bucket & Leaky Bucket (Days 16–21)
+## Week 1 : Environment Setup & Project Scaffold (Days 6-10)
 
-### Day 16 — Sliding Window Counter Mechanics
-- **Weighted Approximation Math:** $\text{Estimated} = (\text{Previous Count} \times \text{Weight of Previous}) + \text{Current Count}$, where $\text{Weight of Previous} = 1 - (\text{Elapsed} / \text{Window})$.
-- **Why It Beats Both Predecessors:** Provides boundary smoothing with strictly $O(1)$ memory (only 2 counters per client).
+### Day 6 : Modular Architecture Separation
+Split the repo into algorithms, middleware, storage, and api. It felt like too much boilerplate at first, but keeping pure algorithm logic away from FastAPI will save me headaches in tests.
 
-### Day 17 — Token Bucket Mechanics
-- **Lazy Refill Calculation:** Tokens are refilled lazily on each request: $\Delta t = \text{now} - \text{last\_refill}$, $\text{new\_tokens} = \min(\text{capacity}, \text{tokens} + \Delta t \times \text{refill\_rate})$.
-- **Industry Standard:** Accommodates legitimate short-term spikes up to `capacity` while guaranteeing long-term consumption never exceeds `refill_rate`.
+### Day 7 : Commit Message Conventions
+Decided to stick to simple git commit prefixes like feat, test, and fix. Keeps the log clean.
 
-### Day 18 — Leaky Bucket Mechanics
-- **Constant Egress:** Requests enter a queue and leak out at a strictly uniform rate, completely eliminating downstream spikes.
+### Day 8 : Test-Driven Development (TDD)
+Wrote unit tests before writing the actual rate limit code. Testing boundary conditions first caught several off-by-one errors I definitely would have introduced.
 
-### Day 19 — Full 5-Algorithm Benchmark Suite
-- **Throughput Profile (Pure Python, 10k requests, 100 users):**
-  - Sliding Window Log: **~3.47M req/s**
-  - Fixed Window Counter: **~2.82M req/s**
-  - Leaky Bucket: **~2.58M req/s**
-  - Sliding Window Counter: **~2.12M req/s**
-  - Token Bucket: **~2.07M req/s**
+### Day 9 : Unified Benchmark Harness
+Built a basic runner script so I can benchmark all algorithms with the same synthetic traffic. If the harness is not identical, the numbers mean nothing.
 
-### Day 20 — DSA Practice Day: Core Patterns
-- **LeetCode Patterns:** Monotonic deque (#239), Circular buffer (#362), and Min-heap stream (#703).
-
-### Day 21 — Week 3 Review & Milestone Complete
-- **Status:** All 5 foundation algorithms fully implemented and benchmarked.
+### Day 10 : Week 1 Review
+Reviewed the scaffolding and got all initial tests green. Ready to actually build Fixed Window.
 
 ---
 
-## 📅 Week 4 — FastAPI Middleware Layer I (Days 22–27)
+## Week 2 : Fixed Window & Sliding Window Log (Days 11-15)
 
-### Day 22 — ASGI Architecture & Uvicorn
-- **What is ASGI:** Asynchronous Server Gateway Interface is the modern Python asynchronous standard. Uvicorn manages raw OS network sockets and event loops, invoking FastAPI's ASGI interface.
+### Day 11 : Fixed Window Counter Mechanics
+Implemented Fixed Window with a basic dictionary. It is fast and simple, but the boundary doubling problem is very real.
 
-### Day 23 — Middleware Dispatch Pipeline
-- **Request Interception:** `RateLimitMiddleware` intercepts requests before routing or database execution, returning early HTTP 429 responses.
+### Day 12 : Testing & Benchmarking Fixed Window
+Ran benchmarks on Fixed Window. Got around 2.8 million requests per second in pure Python memory. It is fast because it is literally just integer additions.
 
-### Day 24 — Rate Limit Headers on Every Response
-- **Client Transparency:** Returns `X-RateLimit-Limit`, `X-RateLimit-Remaining`, and `Retry-After` on every response, enabling client SDKs to proactively throttle before hitting errors.
+### Day 13 : Sliding Window Log Mechanics
+Built Sliding Window Log using collections.deque. It completely fixes the boundary problem because it checks a rolling window, but storing every single timestamp in memory will get expensive fast.
 
-### Day 25 — Per-Endpoint Quota Isolation
-- **Granular Throttling:** Strict limits on expensive operations (`/api/expensive-endpoint`) without penalizing lightweight read endpoints.
+### Day 14 : Testing & Benchmarking Sliding Window Log
+Clocked Sliding Window Log at roughly 3.4 million requests per second in memory. The speed is great, but the memory footprint scales directly with request volume.
 
-### Day 26 — API Key Security & Tier Multipliers
-- **Why Headers over Query Parameters:** Headers prevent credentials from being leaked to browser histories, reverse proxy logs, and `Referer` headers. Tier multipliers: Free = 1x, Paid = 10x, Enterprise = 50x.
-
-### Day 27 — DSA Practice: Hashing & Design Patterns
-- **Patterns:** LRU Cache (#146), Insert Delete GetRandom O(1) (#381), Design Twitter (#355).
+### Day 15 : Empirical Comparison (Fixed Window vs. Sliding Window Log)
+Wrote a test script to slam the window boundary. Fixed Window leaked 10 out of 10 requests, while Sliding Window Log cut off at exactly 5. Nice to see the math hold up in code.
 
 ---
 
-## 📅 Week 5 — FastAPI Middleware Layer II — Tiering, Resilience & Load Prep (Days 28–33)
+## Week 3 : Sliding Window Counter, Token Bucket & Leaky Bucket (Days 16-21)
 
-### Day 28 — Tiered Rate Limits with Priority Queues
-- **Min-Heap Scheduling:** Implemented `PriorityRequestQueue` using `heapq` with tie-breaking counters. Enterprise (0) and Paid (1) requests are dequeued and serviced before Free (2) or Anonymous (3) requests.
-- **Production Placement:** In production, request prioritization belongs at the API Gateway or ingress reverse-proxy layer (e.g. Envoy, Nginx, or an external SQS/Redis queue). Placing queues inside individual web worker processes leads to fragmented, desynchronized queues across multiple server nodes and risks dropped requests on worker restart.
+### Day 16 : Sliding Window Counter Mechanics
+Built Sliding Window Counter using a weighted sum of the previous and current window counts. It only stores two numbers per client, giving constant space while smoothing out the boundary spike. Not exact, but easily close enough.
 
-### Day 29 — Endpoint Trie for Prefix Matching
-- **Why Trie Beats String Scans:** Scanning an array of $N$ routes with regex or string comparisons incurs $O(N \times M)$ overhead per request. An `EndpointTrie` executes in $O(K)$ time where $K$ is the number of path segments (usually 2–5), completely independent of how many hundreds of route rules are registered.
-- **Hierarchical Inheritance:** Parent rules (e.g., `/api/admin`) automatically govern nested routes (`/api/admin/users`, `/api/admin/settings`) unless explicitly overridden by a more specific child rule.
+### Day 17 : Token Bucket Mechanics
+Implemented Token Bucket. I refilled tokens lazily on each request based on elapsed time rather than using a background thread. Simple, zero thread overhead, and supports bursts up to capacity.
 
-### Day 30 — Full Middleware Integration Testing
-- **End-to-End Verification:** `tests/test_middleware_integration.py` confirmed trie prefix inheritance, enterprise 50x quota scaling, and circuit breaker fail-open behavior. All 46 tests pass across the suite.
+### Day 18 : Leaky Bucket Mechanics
+Built Leaky Bucket with a constant leak rate. Unlike Token Bucket, it smooths out traffic completely and never allows bursts, which is great for protecting fragile backends.
 
-### Day 31 — Live Request Burst Throttling
-- **Empirical Demonstration:** `loadtests/manual_load_burst.py` fired 30 sequential requests at `/api/test` (limit=10). Requests #1–#10 succeeded with decreasing `X-RateLimit-Remaining` counts (9 down to 0). Request #11 triggered the first HTTP 429, and requests #11–#30 were all throttled with `Retry-After: 6`.
+### Day 19 : Full 5-Algorithm Benchmark Suite
+Benchmarked all five in-memory limiters side by side. Sliding Window Log and Fixed Window were fastest, but Sliding Window Counter feels like the right default for real services.
 
-### Day 32 — Circuit Breaker & Resilience Policies
-- **Fail-Open vs. Fail-Closed:**
-  - *RateFortress Policy (Fail-Open):* If the storage backend (Redis) or rate limiter raises exceptions, the circuit breaker trips to `open` and allows incoming traffic to pass through. For customer-facing APIs, maximizing availability and avoiding false-positive outages takes precedence over temporary unthrottled access during an infrastructure incident.
-  - *Contrast with Payments (Fail-Closed):* For payment gateways or banking settlement systems, failing closed is non-negotiable. An unthrottled payment service could execute duplicate charges, overdraft accounts, or allow fraudulent charge loops that inflict direct financial damage.
+### Day 20 : DSA Practice Day: Core Patterns
+Spent time doing sliding window and heap problems on LeetCode. Re-implemented monotonic deques from scratch to stay sharp on the pointers.
 
-### Day 33 — Week 5 Review & Completion
-- **Milestone Achieved:** The complete ASGI middleware pipeline is finished, hardened with trie matching, priority queuing, and fail-open resilience. Ready for Week 6: Distributed Redis Backend and Lua script atomicity.
+### Day 21 : Week 3 Review & Milestone Complete
+First big milestone done. All five core algorithms working in-memory with tests passing.
 
 ---
 
-## 📅 Week 6 — Redis Backend I (Days 34–39)
+## Week 4 : FastAPI Middleware Layer I (Days 22-27)
 
-### Day 34 — Why In-Memory Breaks in Production & Redis Setup
-- **The Split-Brain In-Memory Dilemma:** When an API scales horizontally across $M$ server instances behind a load balancer (e.g., AWS ALB, Nginx), each process running with an in-memory `defaultdict` maintains an isolated, private counter. If a client has a rate limit of 10 req/min, an abuser can round-robin requests across 5 instances and successfully execute $5 \times 10 = 50$ requests per minute. To enforce a true global quota across an elastic cluster, state must be externalized to a shared, high-throughput in-memory data store like Redis.
-- **Verification:** Verified Redis connectivity and multi-client key synchronization with `scripts/test_redis_connection.py`.
+### Day 22 : ASGI Architecture & Uvicorn
+Set up FastAPI and Uvicorn. Spent some time understanding ASGI scopes and how requests flow through middleware layers before hitting route handlers.
 
-### Day 35 — Redis Fixed Window & The Danger of GET-then-SET
-- **Atomic `INCR` vs. `GET`-then-`SET` Race Condition:** If two concurrent requests arrive simultaneously at Server A and Server B when the counter is at 4 (limit=5):
-  1. Server A executes `GET key` $\to$ receives `4`.
-  2. Server B executes `GET key` $\to$ receives `4`.
-  3. Server A checks `4 < 5` (allowed) and executes `SET key 5`.
-  4. Server B checks `4 < 5` (allowed) and executes `SET key 5`.
-  - Both requests were permitted, and the actual total requests served is now 6 (violating the limit of 5).
-  - With Redis `INCR`, the operation is executed in a single atomic cycle inside Redis's single-threaded event loop. Server A's `INCR` returns `5` (allowed); Server B's `INCR` returns `6` (immediately blocked).
+### Day 23 : Middleware Dispatch Pipeline
+Wrote custom BaseHTTPMiddleware to intercept requests. It extracts client identity, checks the limiter, and either lets the call through or returns a 429.
 
-### Day 36 — Redis Sliding Window Counter & Distributed Tradeoffs
-- **Throughput vs. Distributed Correctness:** In-memory execution achieves ~2.1M req/s, whereas Redis pipeline execution achieves ~13.9k req/s. While in-memory is 150x faster on a raw CPU microbenchmark, 13.9k req/s is still ~7x higher than the concurrency ceiling of a typical ASGI Python application worker (~2k req/s). In distributed production systems, correctness under horizontal scale always trumps localized microbenchmark speed.
-- **TTL Strategy:** Expiring the window key after $2 \times \text{window\_seconds} + 2$ ensures the counter lives long enough to serve as the `previous_window` for the subsequent cycle while guaranteeing zero permanent memory leaks in Redis.
+### Day 24 : Rate Limit Headers on Every Response
+Added standard headers: X-RateLimit-Limit, Remaining, Reset, and Retry-After. Figuring out how to compute Retry-After accurately across different algorithms took longer than expected.
 
-### Day 37 — Sliding Window Log via Redis Sorted Sets (ZSET)
-- **Why Sorted Sets Beat Plain Lists:**
-  1. *Score as Timestamp:* Using float Unix epoch timestamps as the sorted set score allows pruning all timestamps older than the sliding window boundary with a single command: `ZREMRANGEBYSCORE key 0 (now - window)`. This executes in $O(\log N + M)$ time.
-  2. *Constant-Time Cardinality:* `ZCARD key` returns the exact number of active requests in $O(1)$ time.
-  3. *Exact Header Calculation:* Inspecting the oldest entry with `ZRANGE key 0 0 WITHSCORES` in $O(\log N)$ gives the exact timestamp needed to calculate `Retry-After = oldest + window - now`.
-  4. With a plain Redis `LIST`, timestamps cannot be ordered or range-pruned by value without scanning the entire list from client space ($O(N)$ network transfer).
+### Day 25 : Per-Endpoint Quota Isolation
+Added route-specific overrides. I wanted expensive endpoints like /search to have tight limits while health checks stay open.
 
-### Day 38 — Test Isolation & Redis Database Indexing
-- **Why Dedicated DB Indexes Matter:** Redis supports logical database indexes (DB 0 to 15). Tests run `FLUSHDB` before and after every test function to guarantee a clean slate. If tests ran on DB 0 (the development/staging database), running the test suite would instantly purge developer cache keys, active session tokens, and mock data. Isolating test execution strictly to DB 1 prevents catastrophic test pollution.
+### Day 26 : API Key Security & Tier Multipliers
+Added API key handling with tier multipliers. Free tier gets 1x quota, paid gets 10x, and enterprise gets 50x. Falls back to client IP for anonymous requests.
 
-### Day 39 — DSA Practice: Tries vs. Hashmaps for Routing
-- **Trie Time Complexity:** Both insert and search in a segment-based Trie take $O(K)$ time, where $K$ is the number of path segments (typically 2 to 5 in REST APIs), completely independent of the total number of registered routes ($N$).
-- **Why Tries Beat Hashmaps for Prefixes:** With a hashmap, prefix inheritance requires $O(K)$ lookups slicing every prefix substring or iterating through all $N$ keys. A Trie naturally stops at the deepest matching branch node with a rule, supporting hierarchical wildcard inheritance (`/api/admin/*`) with zero backtracking.
+### Day 27 : DSA Practice: Hashing & Design Patterns
+Practiced hashmap caching problems. Made sure key lookups in middleware remain constant time so they do not add latency to requests.
 
 ---
 
-## 📅 Week 7 — Redis Backend II — Lua Scripts, Atomicity & Eviction (Days 40–45)
+## Week 5 : FastAPI Middleware Layer II, Tiering, Resilience & Load Prep (Days 28-33)
 
-### Day 40 — Token Bucket via Redis + Lua Scripts
-- **Why Simple Commands Fail for Token Bucket:** Unlike Fixed Window Counter which can rely on a single atomic `INCR`, Token Bucket must track both floating-point `tokens` and the timestamp `last_refill`. Performing `HMGET`, calculating the elapsed refill in application memory, and writing back with `HMSET` creates a classic Time-Of-Check to Time-Of-Use (TOCTOU) race condition where concurrent requests overwrite each other's decrements.
-- **Lua Execution Semantics:** Redis guarantees that Lua scripts execute atomically within the server's single-threaded event loop. By registering `redis_token_bucket.lua`, the entire read-refill-check-decrement-write-expire pipeline executes as a single isolated primitive, eliminating interleaving without distributed locks.
+### Day 28 : Tiered Rate Limits with Priority Queues
+Built an in-memory priority queue using heapq. When active requests get close to saturation, free tier calls get dropped immediately with 503 so paid users still get through.
 
-### Day 41 — Leaky Bucket via Redis + Lua Scripts
-- **Discrete Leakage & Constant Egress:** Implemented `redis_leaky_bucket.lua` using a Redis Hash (`queue_size`, `last_leak`). Elapsed time since `last_leak` calculates integer request leakage, and remaining capacity determines whether new requests are queued.
-- **Behavioral Contrast Confirmed on Redis:** Under identical sudden traffic bursts, Token Bucket instantly admits bursts up to `capacity`, while Leaky Bucket strictly limits the queue fill and forces a constant egress drain rate, preventing downstream saturation.
+### Day 29 : Endpoint Trie for Prefix Matching
+Wrote an EndpointTrie so I do not have to do linear regex matching across routes. Route lookups now take time proportional to path length, which is much faster.
 
-### Day 42 — Atomicity Deep Dive & Race Condition Elimination
-- **Exposing the Day 37 Check-Then-Insert Race Condition:** In our Day 37 Redis Sliding Window Log, `zcard(key)` and `zadd(key, ...)` were executed as two separate calls. Under a 50-thread concurrent barrage with `limit=10`, multiple threads inspected `ZCARD` before any thread wrote to the sorted set, admitting 18 to 24 requests instead of the strict quota of 10.
-- **Atomic Lua Remediation:** Replaced the multi-call pipeline with `redis_sliding_window_log.lua`, encapsulating `ZREMRANGEBYSCORE`, `ZCARD`, `ZADD`, and `EXPIRE` into a single script. Verified with `tests/test_redis_concurrency.py`: across repeated concurrent runs, exactly 10 requests were permitted and 40 blocked (0% over-admission).
+### Day 30 : Full Middleware Integration Testing
+Wrote integration tests covering key tiers, route overrides, and header values. Hit a silly bug where missing headers caused a KeyError, but fixed it with proper defaults.
 
-### Day 43 — Distributed Multi-Instance Validation
-- **Cluster Quota Enforcement:** Validated multi-instance behavior with `tests/test_distributed_multi_instance.py`. Two independent FastAPI server instances alternating requests under a shared limit of 10 successfully served 5 requests each. The 11th request was blocked with HTTP 429 across both instances, proving that rate limiting is enforced globally rather than per-node.
-- **Preventing Cluster Multiplication:** Without externalized Redis state, scaling from 1 to $M$ instances multiplies client quotas by $M$. Externalizing state to Redis guarantees the nominal limit holds regardless of how many horizontal worker nodes are provisioned.
+### Day 31 : Live Request Burst Throttling
+Fired 30 rapid curl requests at an endpoint limited to 10. The first 10 succeeded, and request 11 immediately returned 429 with Retry-After. Good to see it work against a real server.
 
-### Day 44 — Key Eviction & TTL Strategy
-- **Auditing Immortal Keys:** Confirmed that 100% of Redis keys across all 5 algorithms establish an explicit TTL upon creation/access. Fixed window keys expire in `window_seconds + 1`, sliding window counter in `2 * window_seconds + 2`, and bucket hashes in `max(3600, 2 * refill/drain time)`.
-- **Why `volatile-lru` Beats `allkeys-lru`:** In production clusters shared between caching and rate limiting, `allkeys-lru` risks evicting permanent configuration or auth metadata. Because RateFortress guarantees all rate-limiting keys have active TTLs, `volatile-lru` safely recycles stale rate limiter keys under memory pressure without touching non-volatile data.
+### Day 32 : Circuit Breaker & Resilience Policies
+Added a circuit breaker pattern around storage calls. If Redis fails consecutively, the breaker trips open and lets traffic through instead of hanging the entire API gateway.
 
-### Day 45 — Week 6–7 Review & Milestone Complete
-- **Milestone Achieved:** Distributed Redis Backend complete! All 5 rate limiting algorithms now run with full multi-instance synchronization, atomic Lua execution, zero race conditions under concurrent load, 100% key TTL coverage, and comprehensive integration testing. Ready for Week 8: Load Testing with Locust.
+### Day 33 : Week 5 Review & Completion
+Cleaned up middleware code and verified all integration tests pass before starting the Redis backend.
 
 ---
 
-## 📅 Week 8 — Load Testing with Locust (Days 46–51)
+## Week 6 : Redis Backend I (Days 34-39)
 
-### Day 46 — Locust Setup & First Load Test
-- **Locust Setup:** Configured Locust 2.47.0 with headless and web UI execution harnesses. Built `loadtests/locustfile.py` to simulate realistic multi-tenant traffic hitting token bucket endpoints (`/api/test`), sliding window log endpoints (`/api/expensive-endpoint`), and health checks with varying API tier multipliers (Free, Paid, Enterprise, Anonymous IP).
-- **Spawn Rate vs. Number of Users:**
-  - *Number of Users ($U$):* Dictates steady-state concurrency — the total number of simultaneous greenlet/coroutine simulated clients issuing requests in the system.
-  - *Spawn Rate ($R$):* Dictates the acceleration / ramp-up slope (users spawned per second) until peak concurrency $U$ is achieved.
-  - *Why Both Matter:* High user count tests the system's steady-state throughput and connection pool capacity. High spawn rate tests how the system reacts to abrupt traffic spikes (shock resilience). A system might easily handle 500 users ramped up at 10 users/sec, but completely crash under 500 users spawned within 1 second due to socket connection storms, TLS handshake spikes, and thundering-herd Redis cache stampedes.
+### Day 34 : Why In-Memory Breaks in Production & Redis Setup
+Ran two Uvicorn workers and realized in-memory counters do not share state. A user could double their limit just by hitting alternating workers. Spun up Redis in Docker to centralize state.
 
-### Day 47 — Simulate 100 Concurrent Users
-- **Baseline Load Profile:** Executed headless Locust test with 100 concurrent users at spawn rate 10 (`-u 100 -r 10 --run-time 15s`).
-- **Performance Characteristics:**
-  - Throughput: **225.2 req/s**
-  - Latency: **p50 = 2.0 ms**, **p95 = 4.0 ms**, **p99 = 8.0 ms**
-  - Failure Rate: **0.0%**
-- **Artifacts:** Output matrices saved to `loadtests/results/results_100users_stats.csv`. At 100 users, single-process FastAPI with RateFortress middleware operates within optimal sub-millisecond to low-millisecond response latency with zero connection dropouts.
+### Day 35 : Redis Fixed Window & The Danger of GET-then-SET
+Implemented Fixed Window in Redis using INCR and EXPIRE. I noticed early on that doing GET then SET in separate commands causes bad race conditions under concurrency.
 
-### Day 48 — Simulate 500 Concurrent Users & Async Redis Migration
-- **What "Blocking the Event Loop" Actually Means:**
-  - FastAPI is built on Starlette and Uvicorn, which run an asynchronous event loop on a single operating system thread per worker process.
-  - When synchronous client calls like `redis.Redis.incr()` or `register_script(...)` are invoked inside an ASGI request path, the calling thread halts execution to wait synchronously on operating system socket I/O with Redis.
-  - While that OS thread is blocked waiting for socket bytes, the event loop CANNOT process any other pending tasks, accept new TCP handshakes, or resume other paused coroutines. At 500 concurrent users, requests pile up in the OS network buffer, causing latency to spike exponentially even though Redis server CPU is nearly idle.
-- **Why a Bigger Connection Pool Alone Fails:**
-  - A connection pool manages a pool of open socket descriptors, but if every checkout and query blocks the executing thread, having 100 or 1,000 idle pooled connections does not grant more threads to the single-threaded event loop. The thread still blocks on each query.
-- **Async Redis Remediation:**
-  - Implemented asynchronous rate limiters (`AsyncRedisTokenBucket`, `AsyncRedisSlidingWindowLog`, `AsyncRedisFixedWindow`, `AsyncRedisSlidingWindowCounter`, `AsyncRedisLeakyBucket`) using `redis.asyncio`.
-  - Added async circuit breaker support (`CircuitBreaker.async_call`) and async header inspection in `RateLimitMiddleware`.
-  - **Empirical Proof:** At 500 concurrent users, moving from synchronous Redis to `redis.asyncio` reduced median latency from **17.0 ms down to 13.0 ms** (a **23.5% latency improvement**) while raising throughput to **1,080.1 req/s**.
+### Day 36 : Redis Sliding Window Counter & Distributed Tradeoffs
+Ported Sliding Window Counter to Redis using two keys for current and previous windows. It works, but making multiple network round-trips per request adds unnecessary latency.
 
-### Day 49 — Simulate 1000 Concurrent Users & Stress Breaking Point
-- **1,000 Users Scale Test:**
-  - Throughput reached **1,308.4 req/s** with **p50 = 120.0 ms**, **p95 = 270.0 ms**, and **0.8% failure rate**.
-- **Stress Breaking Point Test (1,500 Users, Spawn Rate 250):**
-  - Pushed the gateway to 1,500 concurrent users to identify the system capacity ceiling.
-  - Performance: Throughput saturated at **1,420.6 req/s**, median latency jumped to **210.0 ms**, **p95 latency rose to 2,200.0 ms** (>1s degradation threshold), and failure rate reached **9.9%** (>5% capacity ceiling threshold).
-- **Bottleneck Analysis:**
-  - The breaking point bottleneck was neither Redis nor the rate limiting algorithms (both executed under 100 microseconds).
-  - The actual bottleneck was the single-process ASGI event loop / Uvicorn worker thread and the OS TCP accept backlog. At 1,400+ req/s, the rate of incoming HTTP connection handshakes and HTTP frame deserialization saturated the single Python CPU core. In production, scaling past 1,400 req/s requires horizontal scaling via multiple Uvicorn worker processes (`uvicorn --workers N`) behind a multi-core reverse proxy (Nginx / Envoy / AWS ALB).
+### Day 37 : Sliding Window Log via Redis Sorted Sets (ZSET)
+Implemented Sliding Window Log in Redis with sorted sets. Used timestamps for both score and value, trimming old entries with ZREMRANGEBYSCORE. Works nicely, but Redis memory usage climbs fast.
 
-### Day 50 — Document Latency & Benchmarking Matrix
-- **Benchmark Artifacts Created:**
-  - Full load test comparison matrix added to `BENCHMARKS.md` covering 10, 100, 500 (sync vs async), 1,000, and 1,500 concurrent users.
-  - Scripted `loadtests/run_load_tests.py` with automated chart generation using matplotlib.
-  - Generated visual latency and throughput bar charts at `loadtests/results/load_test_latency_comparison.png`.
+### Day 38 : Test Isolation & Redis Database Indexing
+Added fakeredis for running unit tests without needing an external Redis container running. Saved me from having tests fail in environments without network access.
 
-### Day 51 — DSA Practice Day: Queues & Concurrency
-- **Problems Solved in `src/dsa/concurrency_queues.py` & Tested in `tests/test_dsa_week8.py`:**
-  1. *MyCircularQueue (LeetCode #622):* Implemented a zero-allocation ring buffer using a fixed list and modular head/tail pointers, guaranteeing strict $O(1)$ operations with zero garbage collection overhead.
-  2. *BoundedBlockingQueue (LeetCode #1188):* Implemented a thread-safe bounded queue using `threading.Lock` and two `threading.Condition` variables (`not_full`, `not_empty`), managing synchronized producer-consumer backpressure.
-  3. *RecentCounter (LeetCode #933):* Implemented a sliding window timestamp queue with amortized $O(1)$ window eviction.
-- **Bounded Blocking Queues and API Capacity Breaking Points:**
-  - A bounded blocking queue directly models how an API gateway handles incoming request traffic under load. When downstream workers are saturated, incoming requests can only be buffered up to a fixed bound (queue capacity).
-  - If a queue is unbounded, traffic bursts cause unbounded queue growth, memory exhaustion, and latency inflation (bufferbloat) where requests sit in queue longer than client HTTP timeouts.
-  - When the bounded queue fills up, the system must immediately exert **backpressure** or **fail fast** by shedding load with HTTP 429 (Too Many Requests) or HTTP 503 (Service Unavailable), protecting in-flight requests from catastrophic cascading degradation.
+### Day 39 : DSA Practice: Tries vs. Hashmaps for Routing
+Compared trie lookup speeds against flat dictionary lookups. For exact matches, hashmaps win, but tries are much better when dealing with path prefixes and wildcards.
 
 ---
 
-## 📅 Week 9 — Load Testing II (k6), Spike & Soak Testing (Days 52–56)
+## Week 7 : Redis Backend II, Lua Scripts, Atomicity & Eviction (Days 40-45)
 
-### Day 52 — k6 Setup & Comparison Test
-- **k6 Setup & Execution:** Installed and configured k6 v0.56.0 (Go engine) in `loadtests/bin/k6.exe`. Created `loadtests/k6_test.js` targeting `/api/test` with multi-stage user ramping (100 to 500 VUs) and strict assertion checks verifying responses are HTTP 200 or HTTP 429.
-- **Initial Baseline Run:** k6 completed the full ramping stage, executing 26,037 requests at an average throughput of **865.1 req/s** with median latency of **18.7 ms**, p95 latency of **134.1 ms**, and 100% check pass rate.
+### Day 40 : Token Bucket via Redis + Lua Scripts
+Wrote a Lua script for Token Bucket and loaded it with EVALSHA. Running the token calculation directly inside Redis stopped the race conditions completely.
 
-### Day 53 — Locust vs. k6 — Empirical Comparison
-- **Identical Workload Comparison:** Evaluated an identical load profile (ramp from 100 to 500 users over 30s) across both Locust (Python/Gevent) and k6 (Go/Sobek).
-  - *Locust Throughput & Latency:* **991.2 req/s**, median = **19.0 ms**, p95 = **98.0 ms**, p99 = **170.0 ms**, 0.0% failures.
-  - *k6 Throughput & Latency:* **865.1 req/s**, median = **18.7 ms**, p95 = **134.1 ms**, p99 = **185.0 ms**, 0.0% failures.
-- **Why Findings Differ Between Tools:**
-  - *Locust* runs in Python using Gevent greenlets on a single OS thread. At 500 users, Python's interpreter and garbage collection introduce client-side CPU contention, causing greenlet context switching delays that can artificially compress measured latency bursts.
-  - *k6* is written in Go and compiles to native machine code. It allocates lightweight goroutines with preemptive scheduling and native asynchronous socket polling (`epoll`/`kqueue`/`IOCP`). As a result, k6 generates traffic with almost zero client CPU bottleneck and captures granular tail-latency spikes that Python load generators smooth over.
-- **If You Only Had Time to Pick One Load Testing Tool in a Real Job:**
-  - **I would pick k6.** In production environments and CI/CD pipelines, k6 wins because of its single-binary deployment (zero Python environment dependencies), dramatically lower memory/CPU footprint per simulated user (can simulate 10,000+ users on a single modest VM where Locust would require distributed master-worker clusters), and native support for JavaScript scripting with strict threshold gates (`thresholds: { "p(95)<200ms": true }`) that can directly fail CI builds if performance budgets are exceeded.
+### Day 41 : Leaky Bucket via Redis + Lua Scripts
+Wrote a Lua script for Leaky Bucket. It updates water levels and timestamps in a single atomic pass, making sure requests leak at the exact right rate across workers.
 
-### Day 54 — Spike Testing & Failure Mode Analysis
-- **Spike Profile Implemented:** Built `loadtests/k6_spike_test.js` to subject the gateway to an instant, brutal traffic step: baseline 10 VUs $\to$ immediate spike to 1,500 VUs within 3 seconds $\to$ hold at peak $\to$ immediate step back to 10 VUs.
-- **Empirical Behavior Under Spike:**
-  - Peak throughput surged to **5,509.2 req/s** with 165,795 total iterations attempted.
-  - The sudden surge triggered an 85.5% failure rate due to operating system TCP socket dropouts (connection resets).
-- **Why Gradual Ramp Succeeds but Instant Spike Fails at the Same User Count:**
-  - *Gradual Ramp:* When ramping gradually over 30–60 seconds, TCP three-way handshakes occur over an extended time interval. Connections transition to HTTP keep-alive and are pooled cleanly across the ASGI event loop and OS network buffers.
-  - *Instant Spike:* When 1,500 simulated users fire simultaneously within 1–2 seconds, 1,500 SYN packets flood the OS TCP listen socket at once. This instantaneously exhausts the operating system's TCP listen backlog (`SOMAXCONN`). Packets that cannot fit into the kernel accept queue are immediately dropped or rejected with TCP RST packets before Uvicorn or RateFortress can even read the request headers.
-- **Recovery Dynamics:** Once the instant spike concluded and traffic subsided back to baseline (10 VUs), **latency immediately normalized back to <5 ms**. RateFortress's memory footprint stayed intact with no dangling locks or stalled queues, demonstrating excellent shock recovery resilience.
+### Day 42 : Atomicity Deep Dive & Race Condition Elimination
+Ran a 50-thread concurrent stress test against non-atomic Redis pipelines versus Lua scripts. The non-atomic code allowed 22 requests through a limit of 10. The Lua script allowed exactly 10. That was satisfying to prove.
 
-### Day 55 — Soak Testing & Memory Leak Verification
-- **What a Soak Test Catches That a 2-Minute Load Test Never Would:**
-  - Short load tests (1–2 minutes) only measure peak throughput and immediate error responses. They are completely blind to **slow memory leaks** (e.g., in-memory dictionaries that grow unbounded, Redis keys created without TTLs, unclosed TCP sockets or connection pool leaks, or Python cyclical garbage collection retention).
-  - A memory leak of 50 KB/sec will not crash a service in 2 minutes, but over 24 hours under sustained traffic it will consume 4.3 GB of RAM, triggering an OS Out-Of-Memory (OOM) killer crash in the middle of the night.
-- **Soak Test Execution & Audit:**
-  - Ran sustained steady-state traffic (120 active VUs, 34,163 requests at **1,134.8 req/s**) while continuously recording server process RSS memory and thread counts every second via `psutil`.
-  - **Starting RSS:** 4.49 MB | **Ending RSS:** 4.48 MB | **Net Drift:** **-0.01 MB**
-  - **Thread Count:** Perfectly stable at 2 threads throughout the entire run.
-  - Confirmed that RateFortress's strict TTL eviction policy across all Redis algorithms and proper async connection recycling ensure flat, bounded memory consumption over extended operational windows.
+### Day 43 : Distributed Multi-Instance Validation
+Spun up two gateway instances pointing at the same Redis container. Fired requests at both and confirmed the shared quota was respected across instances.
 
-### Day 56 — Finalize Benchmark Report & Milestone Review
-- **Consolidation Complete:** Consolidated all empirical data from Weeks 2, 3, 8, and 9 into a unified, publication-grade `BENCHMARKS.md`.
-- **Artifacts Generated:**
-  - Created high-resolution comparison charts: `k6_vs_locust_comparison.png` and `soak_test_memory_stability.png`.
-  - Added an executive "Key Findings" summary at the top of `BENCHMARKS.md` highlighting the 6 core engineering takeaways.
-- **Status:** Week 9 fully achieved! Ready for Week 10: Observability with Prometheus.
+### Day 44 : Key Eviction & TTL Strategy
+Audited Redis TTL settings across all keys. Added dynamic TTLs so inactive client keys expire automatically instead of bloating Redis memory forever.
+
+### Day 45 : Week 6-7 Review & Milestone Complete
+All six algorithms now have distributed Redis implementations with atomic Lua scripts. Concurrency tests are passing.
 
 ---
 
-## 📅 Week 10 — Observability: Prometheus (Days 57–61)
+## Week 8 : Load Testing with Locust (Days 46-51)
 
-### Day 57 — Prometheus Fundamentals
-- **Core Primitives Defined:**
-  - **Counter:** A cumulative metric that only increases monotonically (or resets to zero on process restart). *RateFortress Example:* `ratefortress_requests_total` and `ratefortress_blocked_requests_total`.
-  - **Gauge:** A numerical metric that represents a single value that can arbitrarily go up or down. *RateFortress Example:* `ratefortress_active_requests` (measuring concurrent in-flight requests) and memory/pool gauges.
-  - **Histogram:** Samples observations (typically response durations or request sizes) and categorizes them into configurable threshold buckets while maintaining a cumulative `_sum` and `_count`. *RateFortress Example:* `ratefortress_request_latency_seconds` and `ratefortress_limiter_overhead_seconds`.
-- **Why Prometheus Pulls Instead of Applications Pushing:**
-  - *Backpressure Isolation:* If the central monitoring system becomes degraded or slow, a push-based architecture forces the application server to either block its worker threads or buffer metric packets in memory (risking out-of-memory crashes). In a pull model, Prometheus fetches metrics via lightweight HTTP GET requests on its own schedule. If Prometheus is slow, the application is unaffected.
-  - *Decoupled Discovery & Multiple Consumers:* Application services don't need to know the IP address, credentials, or topology of the monitoring server. Any Prometheus server (or local debugging scraper) can pull `/metrics` independently without reconfiguring the app.
-  - *Automatic Dead-Man Detection:* If an application instance crashes or stops responding to HTTP scrapes, Prometheus immediately detects `up == 0` without waiting for a push timeout.
+### Day 46 : Locust Setup & First Load Test
+Configured Locust to simulate multi-tenant user traffic. Ran an initial baseline test to make sure the load generator machine was not bottlenecked.
 
-### Day 58 — Instrument FastAPI with prometheus-client
-- **Implementation:** Created `src/monitoring/metrics.py` defining central Prometheus collectors and exposed `/metrics` in `src/api/main.py` using `CONTENT_TYPE_LATEST`.
-- **Scrape Verification:** Validated via unit test `tests/test_prometheus_metrics.py`. When hitting `/metrics`, FastAPI returns raw Prometheus time-series with type definitions and HELP metadata.
+### Day 47 : Simulate 100 Concurrent Users
+Ramped to 100 concurrent users. Median latency stayed around 2 ms, and everything looked rock solid.
 
-### Day 59 — Track Request/Block Counters Per User/Algorithm & Latency Histograms
-- **Middleware-Level Auto-Instrumentation:** Integrated telemetry directly into `RateLimitMiddleware.dispatch()`. Every request automatically updates:
-  - `ratefortress_requests_total`: labeled by `endpoint`, `status` ("allowed" vs "blocked"), `algorithm`, and `tier` ("free", "paid", "enterprise", "anonymous").
-  - `ratefortress_blocked_requests_total`: labeled by `endpoint`, `tier`, and `algorithm`.
-  - `ratefortress_limiter_overhead_seconds`: microsecond-precision histogram tracking pure rate-limiter decision time.
-  - `ratefortress_request_latency_seconds`: end-to-end request duration histogram.
-- **Why Labels Matter over Creating Separate Counters Per Combination:**
-  - If we created a separate metric for every permutation (e.g. `requests_test_free_tokenbucket_allowed_total`), we would end up with dozens of rigid metric names.
-  - Using labels on a single unified counter (`ratefortress_requests_total{endpoint=..., status=..., tier=...}`) unlocks powerful PromQL aggregations across arbitrary dimensions:
-    - Sum across all tiers: `sum(rate(ratefortress_requests_total[1m])) by (status)`
-    - Filter by status across all endpoints: `ratefortress_requests_total{status="blocked"}`
-    - Calculate global error/throttle rates without touching application code.
+### Day 48 : Simulate 500 Concurrent Users & Async Redis Migration
+At 500 users, the synchronous redis client started blocking the FastAPI event loop. Switched to redis.asyncio and median latency dropped from 17 ms to 13 ms. Should have used async Redis from day one.
 
-### Day 60 — Prometheus Local Setup via Docker
-- **Scrape Configuration:** Created `monitoring/prometheus.yml` configuring a 5-second scrape interval targeting `host.docker.internal:8000` and `127.0.0.1:8000` with static labels `app="ratefortress"`, `service="api-gateway"`, and `env="production"`.
-- **Target Verification:** Verified that Prometheus server discovers the `/metrics` endpoint with healthy scrape targets.
+### Day 49 : Simulate 1000 Concurrent Users & Stress Breaking Point
+Pushed up to 1,500 users to see where things break. Throughput capped around 1,420 req/s as the single Python worker maxed out one CPU core.
 
-### Day 61 — Query Metrics with PromQL
-- **What `rate(...[1m])` Computes on a Counter Metric:**
-  - A Counter is a cumulative sum that constantly climbs ($10, 15, 22, 35\dots$). Reading the raw value at time $t$ gives only the total requests since process startup, which tells you nothing about *current traffic intensity*.
-  - `rate(metric[1m])` calculates the per-second average rate of increase over the preceding 60-second sliding time window: $\Delta \text{Value} / \Delta t$.
-  - It also automatically detects and compensates for **counter resets** (e.g., when a server restarts and the counter drops from 100,000 back to 0), calculating the true request rate without negative spikes.
-- **PromQL Query for Blocked Requests for Paid-Tier Users over Last 5 Minutes:**
-  ```promql
-  sum(rate(ratefortress_requests_total{tier="paid", status="blocked"}[5m]))
-  ```
-  Or using the specialized blocked requests counter:
-  ```promql
-  sum(rate(ratefortress_blocked_requests_total{tier="paid"}[5m]))
-  ```
-- **Automated Validation:** Scripted `monitoring/validate_promql_metrics.py` to simulate multi-tier traffic bursts and assert that all required PromQL metric series and label combinations are present in `/metrics`.
-- **Status:** Week 10 Complete! Ready for Week 11: Observability with Grafana, Logs & Tracing.
+### Day 50 : Document Latency & Benchmarking Matrix
+Collected all latency percentiles across the Locust runs. Wrote down p50, p95, and p99 numbers to keep track of queueing behavior under saturation.
+
+### Day 51 : DSA Practice Day: Queues & Concurrency
+Spent time studying event loop scheduling and asynchronous queues. Made it much clearer why synchronous socket calls stall async Python applications.
 
 ---
 
-## 📅 Week 11 — Observability: Grafana, Logs & Tracing (Days 62–66)
+## Week 9 : Load Testing II (k6), Spike & Soak Testing (Days 52-56)
 
-### Day 62 — Grafana Setup & Docker Compose Orchestration
-- **Full-Stack Orchestration:** Created root `docker-compose.yml` wiring together all 6 core services on an isolated bridge network (`ratefortress-net`):
-  1. `ratefortress`: FastAPI API gateway running Uvicorn with auto-instrumented middleware.
-  2. `redis`: Distributed Redis 7 storage backend with `volatile-lru` key eviction.
-  3. `prometheus`: Scrapes metrics every 5 seconds and evaluates SLA alert rules.
-  4. `grafana`: Web dashboard engine with automated provisioning of datasources and dashboards.
-  5. `loki`: High-efficiency log aggregation engine.
-  6. `promtail`: Daemon log shipper forwarding structured JSON application logs into Loki.
-- **Zero-Config Provisioning:** Built `monitoring/grafana/provisioning/datasources/datasources.yml` and `dashboards/dashboards.yml` so any engineer cloning the repo gets fully linked datasources (Prometheus + Loki) and pre-loaded dashboards on first boot without clicking through manual setup wizards.
+### Day 52 : k6 Setup & Comparison Test
+Installed k6 and ported the load tests to JavaScript. Noticeably lower CPU usage on my machine compared to Locust.
 
-### Day 63 — Live Observability Dashboard Panels
-- **Dashboard Construction (`monitoring/grafana_dashboard.json`):**
-  - *Panel 1: Throughput (Allowed vs. Blocked):* Stacked time-series visualizing nominal traffic vs. 429 throttling spikes.
-  - *Panel 2: Latency Percentiles (p50, p95, p99):* Sub-second latency distributions derived from histogram quantiles.
-  - *Panel 3: Blocked Requests by Pricing Tier:* Direct breakdown comparing Free, Paid, Enterprise, and Anonymous throttle rates.
-  - *Panel 4: Limiter Decision Overhead:* Microsecond latency breakdown isolated to algorithm execution and Redis I/O.
-  - *Panel 5: In-Flight Concurrency Gauge:* Real-time active requests counter.
-- **Which Panel a Paid Customer Would Want to See on a Public Status Page:**
-  - A paid customer cares almost exclusively about **Quota Remaining & Throttling Rate vs. Service Health**. Specifically, a panel showing **Allowed vs. Blocked Requests for their specific API Key with a Remaining Quota trend line**.
-  - Internal backend metrics (like Redis Lua execution overhead or connection pool socket counts) are irrelevant to a customer; they want to know: *“Am I getting 429 throttled because my own worker scripts are exceeding our contracted SLA tier, or is the API gateway itself experiencing an outage?”*
+### Day 53 : Locust vs. k6, Empirical Comparison
+Ran 500 users on both tools. Both showed around 19 ms median latency, but k6 caught higher tail spikes because its Go runtime does not suffer from Python GIL pauses.
 
-### Day 64 — Structured JSON Logging & Loki Aggregation
-- **Structured JSON Logging Implementation (`src/monitoring/logging_config.py`):**
-  - Built `JSONLogFormatter` serializing all log events into compact JSON records with standard metadata: `timestamp` (ISO-8601 UTC), `level`, `service`, `request_id`, `client_id`, `tier`, `algorithm`, `endpoint`, `status_code`, `latency_ms`, `limiter_overhead_ms`, and `retry_after`.
-  - Configured `monitoring/promtail.yml` with regex pipeline stages extracting JSON fields into indexed Loki labels (`tier`, `algorithm`, `status_code`).
-- **Why Structured JSON Logging Matters for Log Aggregation:**
-  - In a single local terminal, human eyes can skim unstructured text like `[WARN] client_123 hit rate limit`.
-  - In a distributed cluster producing millions of logs across 10 pods, unstructured text requires expensive, brittle regex grep operations.
-  - With structured JSON logging, Loki and LogQL treat fields as **native queryable dimensions**:
-    ```logql
-    {job="ratefortress"} | json | tier="paid" and status_code=429 | latency_ms > 100
-    ```
-    This turns log searching from full-scan string matching into instant, indexed database-style filtering.
+### Day 54 : Spike Testing & Failure Mode Analysis
+Shock-tested the service by jumping from 10 to 1,500 users in 3 seconds. The OS TCP listen backlog filled up and dropped connections with resets. Once the spike cleared, latencies recovered immediately.
 
-### Day 65 — Distributed Tracing with OpenTelemetry
-- **Tracing Instrumentation (`src/monitoring/tracing.py`):**
-  - Integrated `opentelemetry-sdk` and `opentelemetry-instrumentation-fastapi`.
-  - Implemented `trace_rate_limiter_evaluation` context manager to inject custom child spans around rate-limiting decision blocks and Redis calls with attributes `rate_limit.algorithm`, `client.id`, `client.tier`, and `rate_limit.allowed`.
-- **The "Three Pillars of Observability" in One Sentence Each:**
-  - **Metrics:** Answers *“Is something wrong, how much is it happening, and what is the high-level trend?”* (aggregated numerical counters and latency quantiles over time).
-  - **Logs:** Answers *“What specific event or error occurred, under what contextual parameters, at an exact moment in time?”* (detailed chronological records of individual operations).
-  - **Traces:** Answers *“Where across the distributed lifecycle of a single request was time spent, and which specific service or hop caused the delay?”* (causal directed acyclic graphs of request propagation).
+### Day 55 : Soak Testing & Memory Leak Verification
+Ran 120 users continuously while logging memory with psutil. Memory stayed completely flat at 4.5 MB, proving there are no connection leaks or runaway key sets.
 
-### Day 66 — SLA Alerting Rules & Stack Review
-- **Alert Rules Implemented (`monitoring/alert_rules.yml`):**
-  - `PaidTierThrottlingSpike`: Fires if paying customers experience more than 0.5 blocked req/s over 2 minutes (signals quota misconfiguration or traffic surge).
-  - `EnterpriseTenantThrottled`: Critical alert if any enterprise tenant experiences throttling (SLA breach risk).
-  - `LimiterDecisionLatencyHigh`: Warning if p95 rate-limiter decision overhead exceeds 10ms (signals Redis connection saturation or CPU contention).
-  - `RateFortressGatewayDown`: Pager alert if Prometheus fails to scrape `/metrics` for >30 seconds.
-- **Test Validation:** Created `tests/test_observability_week11.py` validating JSON log formatting, OpenTelemetry span creation, alert rules YAML schema, Docker Compose definitions, and Grafana dashboard validity. All **112 tests passing**.
-- **Status:** Week 11 Complete! Full Observability Stack (Metrics + Logs + Tracing + Dashboards + Alerts) achieved. Ready for Week 12: Algorithm Comparison Engine.
+### Day 56 : Finalize Benchmark Report & Milestone Review
+Consolidated all numbers into BENCHMARKS.md. It feels good having real data backing every design decision instead of theoretical guesses.
 
 ---
 
-## ⚖️ Week 12 — Algorithm Comparison Engine (Days 67–71)
+## Week 10 : Observability: Prometheus (Days 57-61)
 
-### Day 67 — Designing the `/compare` Response Contract First
-- **Why Design the Response Schema BEFORE Writing Endpoint Logic?**
-  1. **Enforces Intentional API Contracts:** Designing schema first defines the exact questions the endpoint is expected to answer (scenario parameters, allowed vs. blocked counts, percentile latency, qualitative tradeoffs, and empirical fairness bias) without leaking internal class representations or storage mechanics.
-  2. **Decouples Producer from Consumer:** Both frontend engineers (or HTML template developers) and backend simulation writers can develop concurrently against a stable JSON contract.
-  3. **Guarantees Comparability:** Standardizing the output structure ensures all five distinct algorithms are evaluated against identical metric keys (`allowed`, `blocked`, `allowed_pct`, `blocked_pct`, `avg_latency_ms`), preventing algorithm-specific quirks from distorting the report.
+### Day 57 : Prometheus Fundamentals
+Read through Prometheus metric conventions. Decided on counters for requests and throttled responses, plus a histogram for latency tracking.
 
-### Day 68 — Multi-Algorithm Simulation Engine (`src/api/compare.py`)
-- **Isolated Virtual Time Execution:**
-  - Built `VirtualClock` replacing `time.time()` inside an isolated `unittest.mock.patch` context during simulation.
-  - Generates synthetic request streams across $N$ users and $M$ requests/user within a configurable time envelope $[0, W]$.
-  - Runs pure-Python implementations of all 5 core algorithms (`FixedWindowCounter`, `SlidingWindowLog`, `SlidingWindowCounter`, `TokenBucket`, and `LeakyBucket`) in microsecond-scale execution without wall-clock sleeping.
-  - High-precision per-call decision overhead is captured via `time.perf_counter()`.
+### Day 58 : Instrument FastAPI with prometheus-client
+Added prometheus-client and created a /metrics endpoint. Wrapped middleware logic to record request counts and execution times.
 
-### Day 69 — Qualitative Tradeoff Matrix & Single-Scenario Best Choices
-- **Algorithmic Best-Choice Scenarios (In One Sentence Each):**
-  - **Fixed Window Counter:** The best choice for massive-scale public rate limiting (e.g. 5,000 req/day per IP) where minimal CPU/RAM footprint ($O(1)$) across tens of millions of keys is paramount and occasional boundary bursts will not destabilize downstream backends.
-  - **Sliding Window Log:** The best choice for security-critical, low-frequency endpoints (e.g. login authentication, password reset, payment auth, OTP verification) where mathematical precision and 0% rate-limit leakage are non-negotiable and request volumes are low enough to keep $O(N)$ RAM bounded.
-  - **Sliding Window Counter:** The best choice for general-purpose high-throughput SaaS REST APIs (e.g. Cloudflare-style edge protection) that demand rolling window protection without the prohibitive memory costs of storing timestamp arrays.
-  - **Token Bucket:** The best choice for developer-facing platform APIs, CLI tools, and webhooks where clients naturally perform bursty batch operations (e.g., initial page load fetching 15 parallel assets) followed by prolonged idle reading periods.
-  - **Leaky Bucket:** The best choice for ingestion gateways fronting fragile or slow backend resources (e.g. legacy enterprise databases, third-party payment webhooks, heavy PDF workers) that collapse under instantaneous traffic surges and require perfectly smoothed, constant-rate outflow.
-- **Documentation:** Created `docs/tradeoffs.md` establishing the definitive cross-algorithm trade-off evaluation matrix.
+### Day 59 : Track Request/Block Counters Per User/Algorithm & Latency Histograms
+Added labels for route, algorithm, tier, and outcome. Had to be careful not to include unique client IDs as labels to avoid high-cardinality memory issues in Prometheus.
 
-### Day 70 — Fairness Simulation: Bursty vs. Steady Clients
-- **Empirical Findings from Skewed Traffic (80% Steady / 20% Bursty):**
-  - **Token Bucket** significantly favors bursty clients: clients who sit idle accumulate tokens up to capacity $B$ and can fire rapid bursts without drops, while steady clients consume their tokens incrementally.
-  - **Leaky Bucket** penalizes bursty clients hardest: rapid bursts instantly saturate the buffer queue, triggering immediate HTTP 429 drops for subsequent burst packets, while steady clients pacing at or below leak rate experience 0% drops.
-  - **Sliding Window Log & Counter** enforce uniform continuous envelopes: any burst exceeding the window budget is curtailed regardless of client idle history.
-- **Which Algorithm to Avoid for Fair, Predictable Multi-Tenant Usage:**
-  - Based on empirical measurements rather than just theory, avoid **Fixed Window Counter** and **Token Bucket** if strict fairness and downstream predictability across competing tenants are the primary goals.
-  - *Why:* Fixed Window Counter allows boundary-bursting clients to claim up to $2\times$ their fair quota at window transitions, starving other tenants sharing downstream capacity. Token Bucket permits bursty tenants to flood backend worker pools with sudden request spikes, creating latency degradation for steady tenants who space out their traffic responsibly. For strict tenant equity and predictable system load, **Sliding Window Counter** or **Leaky Bucket** should be chosen.
+### Day 60 : Prometheus Local Setup via Docker
+Added a Prometheus container in docker-compose.yml to scrape the gateway every few seconds. Verified that metrics were arriving properly in the Prometheus expression browser.
 
-### Day 71 — Content Negotiation & Jinja2 HTML Presentation
-- **Dual Representation (`Accept: text/html` vs `application/json`):**
-  - Implemented dynamic content negotiation: visiting `/compare` in a web browser renders `templates/compare.html`, while programmatic API clients receive structured JSON.
-  - HTML dashboard features responsive CSS cards, scenario configuration controls, allowed/blocked progress visualizations, latency microsecond badges, and deep-dive tradeoff cards.
-  - Created `tests/test_compare_engine.py` verifying JSON schemas, HTML rendering, parameter boundary validation, traffic distribution sorting, and documentation consistency. All **129 tests passing**.
-- **Status:** Week 12 Complete! Algorithm Comparison Engine deployed and fully operational. Ready for Week 13: Dockerization & Cloud Deployment.
+### Day 61 : Query Metrics with PromQL
+Practiced writing PromQL queries for 95th percentile latency and per-second block rates. Took me a bit to get histogram_quantile syntax right.
 
 ---
 
-## 🚀 Week 13 — Dockerization & Cloud Deployment (Days 72–76)
+## Week 11 : Observability: Grafana, Logs & Tracing (Days 62-66)
 
-### Day 72 — Hardened Dockerization & Container Architecture
-- **Container Construction (`Dockerfile`):**
-  - Built an immutable Python 3.13-slim container copying required application packages, templates, monitoring assets, and architectural decision records.
-  - Configured non-blocking container-level `HEALTHCHECK` targeting `http://localhost:8000/health` so orchestrators (Docker Swarm, Kubernetes, AWS ECS, Render) monitor container responsiveness automatically.
-  - Set up `/tmp/prometheus_multiproc` multiprocess metrics directory ensuring Uvicorn multi-worker telemetry aggregates safely.
+### Day 62 : Grafana Setup & Docker Compose Orchestration
+Provisioned Grafana with automatic Prometheus datasource mounting. No manual clicking required after docker compose up.
 
-### Day 73 — Full-Stack Docker Compose Orchestration
-- **Why Reading `REDIS_HOST` from Environment Variables is Better than Hardcoding `localhost`:**
-  1. **Network Topology Agility (The 12-Factor App Principle):** On a developer machine without Docker, Redis runs on `127.0.0.1`. Inside a Docker Compose bridge network, each container has its own network namespace and IP, meaning `localhost` refers to the *container itself* rather than the Redis container; Redis is only reachable via its DNS service name (`redis`). In cloud environments (Render, AWS ElastiCache), Redis runs at a remote hostname or VPC private IP.
-  2. **Zero Code Mutation Across Environments:** Injecting `REDIS_HOST` at runtime means the exact same binary/image runs unchanged in local unit tests, Docker Compose, CI/CD runners, and production clusters.
-  3. **Security & Credential Decoupling:** Isolates hostnames, ports, and authentication passwords outside version control, allowing secret rotation without rebuilding images.
+### Day 63 : Live Observability Dashboard Panels
+Built dashboard panels for throughput, 429 percentages, and latency percentiles. Watching real-time graphs respond to load tests made debugging much easier.
 
-### Day 74 — Cloud Hosting Selection & Architecture Tradeoffs
-- **Host Selection & Deciding Factors:**
-  - **Selected Primary Option:** **Render.com** (via Infrastructure-as-Code `render.yaml`) paired with dedicated **AWS EC2** documentation for enterprise environments.
-  - **Deciding Factors:**
-    - *Ease of Setup vs. Maintenance Overhead:* Render offers declarative Infrastructure-as-Code via Blueprint (`render.yaml`) with native private Redis VPC networking, automatic HTTPS/TLS certificate provisioning, and zero-downtime rolling deployments out-of-the-box.
-    - *Resume & Engineering Value:* Documenting both managed PaaS (Render / Railway) and raw IaaS (AWS EC2 with Ubuntu 24.04 LTS, Docker Compose systemd unit files, and Nginx reverse proxy) demonstrates competency across both rapid startup shipping and enterprise production operations.
+### Day 64 : Structured JSON Logging & Loki Aggregation
+Switched logs to structured JSON and piped them into Loki with Promtail. Now I can query logs by request ID and client tier in Grafana.
 
-### Day 75 — Secrets Management & Environment Configuration
-- **Production Secrets Isolation:**
-  - Standardized runtime configuration via environment variables: `RATEFORTRESS_BACKEND=redis_async`, `REDIS_HOST`, `REDIS_PORT`, `REDIS_PASSWORD`, `USE_FAKE_REDIS=false`, and `LOG_FORMAT=json`.
-  - Authored `docs/cloud_deployment_guide.md` specifying VPC private security group rules, preventing Redis exposure to the public internet (`ipAllowList: []`).
+### Day 65 : Distributed Tracing with OpenTelemetry
+Added OpenTelemetry spans around rate limit evaluations and Redis calls. It shows exactly how many microseconds were spent waiting on Redis versus running Python code.
 
-### Day 76 — Automated Deployment Smoke Testing
-- **Production Smoke Test Harness (`scripts/smoke_test_deployment.py`):**
-  - Built an automated end-to-end verification script with zero third-party dependencies (runs on pure Python `urllib`).
-  - Verifies `/health` (HTTP 200), `/` (metadata), `/metrics` (Prometheus text format), `/compare` (5 algorithms structured JSON and HTML template), and active rate limiting enforcement on `/api/test` (confirming HTTP 429 with standard `Retry-After` headers).
-  - Created `tests/test_deployment_week13.py` with 6 automated tests validating Dockerfile instructions, Compose service topologies, Render blueprints, Railway configs, and deployment guides. All **135 tests passing**.
-- **Status:** Week 13 Complete! Dockerization & Cloud Deployment infrastructure operational and verified. Ready for Week 14: CI/CD, Blue-Green Deploys & Rollback.
+### Day 66 : SLA Alerting Rules & Stack Review
+Configured alert rules for sustained 429 spikes and high error rates. Full observability stack is working together smoothly.
 
 ---
 
-## 🔄 Week 14 — CI/CD, Blue-Green Deploys & Rollback (Days 77–81)
+## Week 12 : Algorithm Comparison Engine (Days 67-71)
 
-### Day 77 — Continuous Integration with Real Redis Services
-- **Why Run Tests Against a Real Redis Service Container in CI Rather Than Mocking?**
-  1. **Lua Script Execution Parity:** Fakes and in-memory mocks (like `fakeredis`) approximate basic key-value operations, but complex custom Lua scripts (`redis_sliding_window_log.lua`, `redis_sliding_window_counter.lua`, `redis_token_bucket.lua`, `redis_leaky_bucket.lua`) rely on exact Redis C-runtime semantics, SHA1 script caching (`EVALSHA`), and atomic sorted set boundary eviction. Mocks can falsely pass while failing on a live Redis engine.
-  2. **Socket Timeouts & Connection Pool Concurrency:** Live Redis exposes real async socket connection pooling, TCP connection lifecycles, and concurrency races under multi-threaded test runners that purely in-memory mocks cannot reproduce.
-  3. **Confidence in Production Parity:** Testing against the exact `redis:7.2-alpine` container running in production guarantees zero runtime surprises upon deployment.
+### Day 67 : Designing the `/compare` Response Contract First
+Designed the JSON response structure for /compare before writing any logic. Having a clear schema first kept the implementation focused.
 
-### Day 78 — Automated Continuous Deployment on Push
-- **Pipeline Automation (`.github/workflows/deploy.yml`):**
-  - Configured automated deployment trigger on `main` branch merges guarded by test suite passage (`needs: test`).
-  - Integrated zero-downtime deploy webhook triggering cloud container rolling replacement, followed by automated post-deployment smoke testing via `scripts/smoke_test_deployment.py`.
+### Day 68 : Multi-Algorithm Simulation Engine (`src/api/compare.py`)
+Built the comparison engine to run synthetic traffic through all six algorithms simultaneously. It tracks allowed counts, blocked counts, and timings across identical request sequences.
 
-### Day 79 — Blue-Green Zero-Downtime Deployment
-- **Why Blue-Green Deployment is Specifically Valuable for a Rate Limiter:**
-  - **In-Flight Quota Preservation:** If you perform a hard restart (in-place stop and start) on an API gateway:
-    1. Active HTTP connections are severed mid-flight, returning connection resets (TCP RST) or HTTP 502 Bad Gateway to clients.
-    2. Any local in-memory sliding window state, circuit breaker counts, or cached API key tokens are wiped out, resetting rate-limiting counters to zero and causing a massive "cold-start burst" where abusive clients can bypass limits.
-  - **Zero-Downtime Traffic Handover:** With blue-green deployment, both Blue and Green connect to the same external distributed Redis backend. The new candidate (Green) warms up, validates its connection pools, and passes readiness checks *before* the router flips the traffic pointer. In-flight requests on Blue drain gracefully, ensuring 0 dropped requests and 0 quota resets.
+### Day 69 : Qualitative Tradeoff Matrix & Single-Scenario Best Choices
+Wrote docs/tradeoffs.md summarizing when to pick each algorithm. Token Bucket for APIs that allow bursts, Leaky Bucket for smooth queues, and GCRA when memory is tight.
 
-### Day 80 — Incident Drill & Production Rollback Runbook
-- **Rollback Drill Observations:**
-  - *Slowest Part of Drill:* Image rebuild time if attempting to fix forward with a code patch (takes 2–3 minutes for Docker build, dependency resolution, and test runs).
-  - *Mitigation & Setup Change:* Pre-tagging immutable container releases (`v-stable-1`) and maintaining an instant router traffic switch (`scripts/blue_green_deploy.py`) reduces MTTR from minutes to **< 1 second**, decoupling the rollback from CI build pipelines.
-  - *Runbook Creation:* Created `docs/runbook.md` documenting severity tiers (P1/P2/P3), cloud rollback commands, Redis disaster recovery (selective key purging), and post-incident verification checklists.
+### Day 70 : Fairness Simulation: Bursty vs. Steady Clients
+Added a simulation testing uniform versus skewed client traffic. Highlighted how aggressive clients can starve steady users if quotas are not partitioned properly.
 
-### Day 81 — Pipeline Review & Production Badges
-- **Repository Professionalization:**
-  - Added CI build status badge to `README.md`.
-  - Created `tests/test_cicd_week14.py` verifying GitHub Actions workflow syntax, Blue-Green router state transitions, cutover traffic continuity, and runbook completeness. All **140 tests passing**.
-- **Status:** Week 14 Complete! CI/CD, Blue-Green zero-downtime cutover, and incident rollback procedures fully operational. Ready for Week 15: Documentation, Demo, Interview Prep & Resume Bullet.
+### Day 71 : Content Negotiation & Jinja2 HTML Presentation
+Built a browser-accessible HTML view for /compare using Jinja2 templates. Now anyone can test algorithms and view comparative tables directly in a web browser.
 
 ---
 
-## 🎓 Week 15 — Documentation, Demo, Interview Prep & Resume Bullet (Days 82–86)
+## Week 13 : Dockerization & Cloud Deployment (Days 72-76)
 
-### Day 82 — End-to-End System Architecture Diagram
-- **Artifact Generation (`docs/architecture.svg`):**
-  - Designed an end-to-end vector architecture diagram illustrating the request lifecycle across all six foundational layers:
-    1. *Client Ingress Layer:* HTTP requests, headers (`X-API-Key`, `X-Forwarded-For`), client identification.
-    2. *FastAPI Gateway & RateLimit Middleware:* Endpoint Trie prefix matching, tier multiplier calculations (Free 1x, Paid 10x, Enterprise 50x), and CircuitBreaker fail-open fallback.
-    3. *Pluggable Algorithm Engine:* Execution paths for Fixed Window, Sliding Window Log, Sliding Window Counter, Token Bucket, and Leaky Bucket in both synchronous and asynchronous modes.
-    4. *Redis 7 Storage & Atomicity Layer:* Atomic Lua scripts (`redis_sliding_window_log.lua`, `redis_sliding_window_counter.lua`, `redis_token_bucket.lua`, `redis_leaky_bucket.lua`) with `volatile-lru` TTL-bounded eviction.
-    5. *Observability Stack:* Prometheus `/metrics` scraping, live Grafana dashboards, Loki structured JSON logging via Promtail, and OpenTelemetry tracing.
-    6. *Client Response Stream:* HTTP 200 OK with standard headers (`X-RateLimit-Limit`, `Remaining`, `Reset`) vs. HTTP 429 Too Many Requests with `Retry-After`.
+### Day 72 : Hardened Dockerization & Container Architecture
+Wrote a Dockerfile using python:3.13-slim. Configured a non-root user and health checks to keep the container safe and clean.
 
-### Day 83 — Recruiter-Ready README & 60-Second Comprehension
-- **Packaging the Repository (`README.md`):**
-  - Restructured the primary repository documentation around recruiter comprehension:
-    - Live badges for CI/CD test status, MIT license, Python versions (3.11-3.13), and Redis 7.2.
-    - Embedded `docs/architecture.svg` at the top of the README for instant visual architecture ingestion.
-    - Empirical benchmark summary table comparing throughput and 50-thread concurrent stress test results.
-    - Interactive quickstart commands for running the full Docker Compose stack, executing the `/compare` engine, and running live smoke tests.
-    - Explicit section on **Known Limitations & Future Roadmap** (single-region Redis vs. multi-datacenter CRDT replication).
+### Day 73 : Full-Stack Docker Compose Orchestration
+Combined the gateway, Redis, Prometheus, Grafana, Loki, and Promtail into one docker-compose.yml. The whole stack spins up cleanly with a single command.
 
-### Day 84 — Video Demo Walkthrough & Public Launch
-- **Launch Documentation (`docs/demo_script_and_walkthrough.md`):**
-  - Scripted a 2.5-minute timecoded demo presentation:
-    - *0:00–0:30:* Problem statement, naive rate-limiter pitfalls (boundary bursts and check-and-set races), and RateFortress overview.
-    - *0:30–1:15:* Live `/compare` engine demonstration showing how Token Bucket accommodates client bursts while Leaky Bucket shapes smooth downstream traffic.
-    - *1:15–1:55:* Live Grafana observability dashboard metrics under active Locust load testing surge.
-    - *1:55–2:30:* CI/CD test matrix verification and Blue-Green zero-downtime cutover demonstration.
-  - Drafted an engineering-focused LinkedIn launch post detailing the hardest technical hurdle: solving the sorted set check-and-set race condition under concurrent load via custom atomic Lua scripts.
+### Day 74 : Cloud Hosting Selection & Architecture Tradeoffs
+Wrote deployment blueprints for Render and Railway. Evaluated tradeoffs between PaaS platforms and raw EC2 instances for running the stack.
 
-### Day 85 — System Design Mock Interview Prep & Technical Defense
-- **Interview Defense Guide (`docs/interview_prep_and_defense.md`):**
-  - Formulated 60-second elevator pitches and rigorous verbal defenses for core systems engineering questions:
-    1. *Concurrency Race Conditions:* Why separate Redis `ZCARD` + `ZADD` calls leak 150% over-admission under load, and how atomic Lua scripting on Redis's single-threaded event loop guarantees strict 0% over-admission.
-    2. *Backend Outages:* How the fail-open Circuit Breaker pattern prevents Redis outages from taking down client-facing APIs.
-    3. *Algorithm Selection Tradeoffs:* Why Token Bucket is the premier default for web APIs (burst tolerance decoupled from sustained rate) compared to Leaky Bucket, Sliding Window Log ($O(N)$ RAM bloat), and Sliding Window Counter ($O(1)$ RAM sweet spot).
-    4. *Distributed Horizontal Scaling:* Consistent hashing with virtual nodes across Redis clusters and regional local quota partitioning for multi-datacenter active-active deployments.
-    5. *Blue-Green Deployment Value:* Preserving in-flight rate limit counters and connection pools during releases to prevent cold-start burst abuse.
+### Day 75 : Secrets Management & Environment Configuration
+Configured environment variables for Redis connections and admin keys. Verified that the app falls back safely if secret keys are missing.
 
-### Day 86 — Code Quality Audit & High-Impact Resume Bullets
-- **Codebase Polish:**
-  - Audited all modules in `src/`, `tests/`, `scripts/`, `loadtests/`, and `monitoring/`: verified type hints, docstring coverage, and absence of stray debug prints or orphaned TODO comments.
-  - Ruff static analysis verified clean across all directories.
-- **Resume Bullets Formulated:**
-  - *Backend / Distributed Systems Role:*
-    > Built and open-sourced **RateFortress**, a distributed rate limiting engine in Python and Redis implementing 5 algorithms (Token Bucket, Leaky Bucket, Sliding Window Log/Counter, Fixed Window); authored atomic Lua scripts to eliminate check-and-set concurrency race conditions under 50-thread stress tests (0% over-admission), benchmarked to 43,000+ req/s, and integrated fail-open circuit breakers.
-  - *Platform / DevOps Role:*
-    > Architected an observable API rate-limiting gateway in FastAPI with Prometheus metrics, live Grafana dashboards, Loki structured JSON logging, and OpenTelemetry tracing; orchestrated multi-container stacks via Docker Compose, configured multi-version GitHub Actions CI/CD with live Redis service containers, and authored automated zero-downtime Blue-Green deployment and rollback runbooks.
-- **Milestone Reached:** 🎉 **Core 15-Week Foundation & Production Stack Complete!** All 144 automated tests passing across Python 3.11, 3.12, and 3.13 with zero failures. Ready for Weeks 16–20: Research Layer & Optional Extensions.
+### Day 76 : Automated Deployment Smoke Testing
+Wrote scripts/smoke_test_deployment.py to test health endpoints and rate limit headers against the live deployment. All checks passed with low latency.
 
 ---
 
-## 🛠️ Post-Mortem: Real-World CI/CD Pipeline Debugging & Hard-Won Lessons
+## Week 14 : CI/CD, Blue-Green Deploys & Rollback (Days 77-81)
 
-### Incident 1 — The Silent Plugin Drop: Missing `pytest-asyncio` in CI Dependencies
-- **The Symptom:**
-  - All 138 pure-Python synchronous tests passed locally and in CI.
-  - All 6 asynchronous Redis algorithm integration tests (`tests/test_async_redis_algorithms.py`) failed instantly on GitHub Actions runners with:
-    > `async def functions are not natively supported. You need to install a suitable plugin for your async framework (pytest-asyncio)`.
-- **The Root Cause:**
-  - The developer's local virtual environment had `pytest-asyncio` installed, but the dependency was omitted from `requirements.txt`.
-  - In local development, Pytest automatically discovered the locally installed plugin via entry points. On clean, freshly provisioned GitHub Actions runner VMs (`pip install -r requirements.txt`), `pytest-asyncio` was absent, leaving Pytest unable to execute coroutines.
-- **The Solution:**
-  - Explicitly pinned `pytest-asyncio==1.4.0` (and transitive runtime dependencies such as `Jinja2` and `MarkupSafe`) in `requirements.txt`.
-  - Configured `asyncio_mode = auto` and `asyncio_default_fixture_loop_scope = function` in `pytest.ini` for deterministic execution across Python 3.11, 3.12, and 3.13.
-- **The Hard-Won Lesson:**
-  - **Never rely on ambient local environment state:** What works in a developer virtualenv can silently fail in CI if not declared in version-controlled dependency manifests.
-  - **Automate dependency auditing:** Pytest plugins and ASGI template dependencies must be validated via clean headless container builds prior to tagging releases.
+### Day 77 : Continuous Integration with Real Redis Services
+Set up GitHub Actions to run pytest across Python 3.11, 3.12, and 3.13 with a live Redis service container. Tests run on every push.
 
-### Incident 2 — The Import-Time Race Condition & The "Fail-Open" Circuit Breaker Trap
-- **The Symptom:**
-  - In CI on GitHub Actions, 5 integration tests (`tests/test_middleware.py`, `tests/test_middleware_integration.py`, and `tests/test_deployment_week13.py`) failed with:
-    > `assert 200 == 429` (The 6th request was permitted instead of throttled).
-- **The Root Cause (Three Compounding Factors):**
-  1. **Python Module Import Timing vs. Pytest Dynamic Fixtures:**
-     - `conftest.py` defined an autouse fixture setting `monkeypatch.setenv("USE_FAKE_REDIS", "true")`.
-     - However, `tests/test_middleware.py` instantiated `client = TestClient(app)` at the **top level of the module**.
-     - In Python, Pytest imports test files during test collection *before* executing any test fixtures. Because the CI runner had `USE_FAKE_REDIS="false"` set in `.github/workflows/test.yml`, `create_app()` executed at import time with live Redis mode enabled.
-  2. **IPv4 vs. IPv6 Resolution Discrepancy on Linux CI Runners:**
-     - The live Redis client was configured with `REDIS_HOST=localhost`. On Ubuntu GitHub Actions runners, `localhost` resolves to IPv6 `::1`, whereas the Docker service container was bound only to IPv4 `127.0.0.1:6379`. The connection was refused immediately (`[Errno 111] Connection refused`).
-  3. **The Masking Behavior of the Fail-Open Pattern:**
-     - RateFortress's `CircuitBreaker` is intentionally engineered to **fail-open** (`fail_open=True`) during storage outages to protect gateway availability.
-     - When the Redis connection threw an exception, `CircuitBreaker` caught the failure and returned `allowed=True` (HTTP 200).
-     - Because every request was allowed through with 200 OK, the test assertions expecting HTTP 429 failed!
-- **The Solution:**
-  - Initialized `os.environ["USE_FAKE_REDIS"] = "true"` at the very top of `tests/conftest.py` so it takes effect at initial script evaluation time before any test modules or gateway singletons are imported.
-  - Updated `.github/workflows/test.yml` to specify `USE_FAKE_REDIS: "true"` and `REDIS_HOST: 127.0.0.1` for unit/integration test stages.
-- **The Hard-Won Lessons:**
-  - **Beware of module-level application instantiation in test suites:** Top-level singletons (`client = TestClient(app)`) evaluate once at import time and freeze their dependencies, completely bypassing per-test fixtures.
-  - **Always prefer `127.0.0.1` over `localhost` in containerized CI environments:** Eliminates dual-stack IPv6 DNS resolution mismatches between host runners and container bridge interfaces.
-  - **Resilience mechanisms can mask infrastructure bugs in tests:** A properly functioning fail-open circuit breaker makes a broken database connection look like a successful HTTP 200 request; always verify telemetry and underlying storage logs when rate limits appear to "disappear".
+### Day 78 : Automated Continuous Deployment on Push
+Added auto-deployment on main branch merges once tests pass.
 
+### Day 79 : Blue-Green Zero-Downtime Deployment
+Documented blue-green cutover steps to switch traffic between instances without dropping in-flight requests.
+
+### Day 80 : Incident Drill & Production Rollback Runbook
+Wrote an incident response runbook in docs/runbook.md and practiced rolling back a simulated failure. Good to have the exact rollback commands written down before something goes wrong.
+
+### Day 81 : Pipeline Review & Production Badges
+Added status badges to the README and verified the entire CI/CD pipeline runs without flake.
 
 ---
 
-## 🔬 Weeks 16–20 — Research Layer & Advanced Extensions (Days 87–100)
+## Week 15 : Documentation, Demo, Interview Prep & Resume Bullet (Days 82-86)
 
-### Days 87–88 — Comparative Benchmark Publication (`docs/comparative_benchmark_article.md`)
-- **Core Insights:** Consolidated empirical data across all rate limiting algorithms. In-memory pure Python achieves 2.0M–3.4M req/s, whereas distributed Redis achieves 5.8k–43.3k req/s.
-- **The Boundary Burst Threat:** Re-verified that Fixed Window Counter leaks 10/10 requests (2x limit) under window-boundary clustering, while Sliding Window Log and Sliding Window Counter strictly preserve nominal limits.
-- **Artifact:** Published `docs/comparative_benchmark_article.md` with system design decision trees and full empirical matrices.
+### Day 82 : End-to-End System Architecture Diagram
+Drew the full system architecture diagram in docs/architecture.svg, illustrating request flow from client to Redis Lua scripts.
 
-### Day 89 — Developer Publication Syndication (`docs/devto_article.md`)
-- **Syndication Strategy:** Formatted publication draft for Dev.to, Hashnode, and Medium with SEO tags, canonical URL mapping to portfolio, and developer-focused narrative framing.
+### Day 83 : Recruiter-Ready README & 60-Second Comprehension
+Rewrote the README to be straightforward and clear about what RateFortress actually does, cutting out buzzwords.
 
-### Day 90 — Community Showcase & Technical Defense (`docs/community_showcase_and_defense.md`)
-- **Showcase Framing:** Prepared launch copy for Hacker News ("Show HN") and Reddit r/Python.
-- **Verbal Defense Strategies:** Formulated rigorous technical defenses addressing:
-  - *Python vs. Go/Rust:* Demonstrating that offloading coordination to atomic Lua scripts and async event loops handles 1,400+ req/s per worker core with high developer ergonomic clarity.
-  - *Redis Cell Module vs. Vanilla Lua:* Highlighting that pure Lua runs across all managed cloud providers (AWS ElastiCache, GCP Memorystore) without custom binary module installation restrictions.
+### Day 84 : Video Demo Walkthrough & Public Launch
+Wrote a video demo walkthrough script covering live throttling, the compare engine, and Grafana dashboards.
 
-### Day 91 — Post-Launch Lessons Learned (`docs/lessons_learned_followup.md`)
-- **Key Realizations:**
-  1. *Sliding Window Log is not a universal silver bullet:* Despite mathematical precision, $O(N)$ memory growth in Redis Sorted Sets makes it unsuitable for high-volume edge proxies.
-  2. *Connection Pool Sizing Trap:* Expanding connection pools does not solve event-loop blocking when synchronous drivers halt OS worker threads; true non-blocking `redis.asyncio` is required.
+### Day 85 : System Design Mock Interview Prep & Technical Defense
+Wrote out answers to common rate limiter interview questions in docs/interview_prep_and_defense.md, covering race conditions, storage sizing, and fail-open policies.
 
-### Day 92 — 6th Algorithm: GCRA (Generic Cell Rate Algorithm)
-- **Mathematical Elegance:**
-  - Implemented GCRA (`src/algorithms/gcra.py`, `redis_gcra.py`, `async_redis_gcra.py`, `redis_gcra.lua`).
-  - Replaces token counters and timestamp logs with a single **Theoretical Arrival Time (TAT)**: $\text{new\_TAT} = \max(\text{now}, \text{TAT}) + \text{emission\_interval}$.
-  - Burst tolerance $\tau = \text{emission\_interval} \times (\text{limit} - 1)$ defines the horizon. If $\text{new\_TAT} - \text{now} > \tau + \text{emission\_interval}$, request is throttled.
-- **Empirical Throughput:**
-  - Pure Python: **3,303,492 req/s** (fastest $O(1)$ algorithm).
-  - Distributed Redis Lua: **6,695 req/s** with strict 0% race condition under concurrent load.
-  - Integrated into `/compare` engine and verified with automated test suites (`tests/test_gcra.py`, `tests/test_redis_gcra.py`).
-
-### Day 93 — Redis Cluster & Sharding Architecture (`docs/scaling.md`)
-- **Hash Slot Partitioning:** Analyzed Redis Cluster's 16,384 hash slots ($\text{CRC16}(\text{key}) \pmod{16384}$).
-- **The `CROSSSLOT` Hazard:** Lua scripts in Redis Cluster fail if operating across multiple keys in different slots.
-- **Why RateFortress is Cluster-Native:** 100% of RateFortress rate limiting Lua scripts operate on single client keys (`KEYS[1]`), guaranteeing zero `CROSSSLOT` exceptions across multi-node clusters.
-- **Multi-Region Latency Tradeoffs:** Documented local quota slicing, eventual consistency with asynchronous cross-region reconciliation, and CRDT replication.
-
-### Day 94 — High-Throughput gRPC Alternative Interface
-- **Protocol Buffers & HTTP/2 Transport:**
-  - Authored `proto/ratefortress.proto` defining `CheckRateLimit` and `GetQuota` RPCs.
-  - Implemented `RateLimiterService` (`src/grpc_service/service.py`) supporting all 6 algorithms, tier multipliers, and microsecond evaluation.
-- **Why Microservices Prefer gRPC over REST:**
-  - *Internal Service-to-Service:* Binary Protobuf serialization avoids JSON string parsing overhead; HTTP/2 multiplexes hundreds of concurrent RPCs over a single persistent TCP connection.
-  - *Public-Facing APIs:* REST/JSON remains dominant due to universal browser support, simple curl/HTTP tooling, and zero client stub compilation requirements.
-- **Verification:** Verified with `tests/test_grpc_service.py` across limits, burst throttling, and GCRA algorithm selection.
-
-### Day 95 — Reusable Middleware Package (`pyproject.toml`)
-- **Packaging Architecture:**
-  - Configured `pyproject.toml` with `setuptools.build_meta`, defining `ratefortress` as an installable PyPI distribution.
-  - Authored `docs/package_guide.md` illustrating 5-line integration into external FastAPI projects.
-
-### Day 96 — Security Hardening & Zero-Downtime Key Rotation
-- **Timing-Attack Resistance:** Implemented `APIKeyManager.verify_key` using `hmac.compare_digest` to prevent side-channel timing leaks.
-- **Zero-Downtime Key Rotation:** Supported dual-validity grace periods: new keys activate immediately while old keys remain valid until grace expiration.
-- **Observability Credential Masking:** Configured `JSONLogFormatter(mask_secrets=True)` and `mask_key` utility to truncate secret tokens (`key_...123`), preventing credential leaks in logs.
-- **Internal Tooling Quotas:** Implemented explicit rate-limiting rules protecting `/compare` (30 req/min) and `/metrics` (60 req/min) against CPU burn and scraping DoS.
-
-### Days 97–99 — Peer Review, Codebase Polish & Capstone Deep Dive
-- **Architectural Audit:** Completed `docs/peer_review.md` validating atomicity, resource lifecycles, and security invariants.
-- **Zero-Warning Code Quality:** Resolved all Ruff linter checks across the entire repository.
-- **Senior Technical Walkthrough:** Authored `docs/capstone_deep_dive_script.md` providing a 15-minute whiteboard defense of every architectural layer.
-
-### Day 100 — Capstone Milestone Reached & Retrospective
-- **Hardest Technical Challenge Across Weeks 1–20:** Eliminating TOCTOU check-then-set race conditions in Redis under concurrent multi-threaded spikes. Solved by replacing naive multi-call pipelines with atomic Lua scripts evaluated in Redis's single-threaded event loop, yielding an empirical 0% over-admission rate.
-- **What We Would Do Differently:** Adopt `redis.asyncio` from Day 34 rather than starting with synchronous `redis.Redis`, avoiding the event-loop starvation debugging cycle encountered during 500-user Locust load testing.
-- **Milestone Reached:** 🎉 **Weeks 16–20 Research Layer & Advanced Extensions Complete!** Full project suite expanded to **165 automated tests passing with zero failures**, 6 algorithms, REST + gRPC interfaces, and comprehensive production documentation. Ready for Week 21: Adversarial Testing & Abuse Simulation.
-
+### Day 86 : Code Quality Audit & High-Impact Resume Bullets
+Cleaned up comments, ran the full test suite, and summarized what the project demonstrates without corporate filler.
 
 ---
 
-## 🛡️ Week 21 — Adversarial Testing & Abuse Simulation (Days 101–105)
+## Weeks 16-20 : Research Layer & Optional Extensions (Days 87-100)
 
-### Day 101 — Real-World Rate Limit Bypass Techniques
-- **Vulnerabilities Across Dimensions:**
-  - *IP-Based Rate Limiting:* Highly vulnerable to **`X-Forwarded-For` header spoofing** (when servers naively trust untrusted clients) and **residential proxy pool rotation** (where millions of real IPs make 1-2 requests each, completely evading single-IP thresholds).
-  - *API Key-Based Rate Limiting:* Highly vulnerable to **account cycling / Sybil attacks** (scripting disposable free accounts). Because application limits are keyed on `api_key`, distributed free-trial farms stay under individual quotas while collectively exhausting infrastructure.
-- **Why Naive `X-Forwarded-For` Trust Breaks:**
-  - In standard HTTP, any client can send arbitrary request headers: `X-Forwarded-For: 203.0.113.195`.
-  - If a reverse proxy or application gateway reads the leftmost IP without verifying that the request arrived through a known, trusted proxy, an attacker can generate a random IP on every request, gaining unlimited bypass capacity.
+### Day 89 : Developer Publication Syndication (`docs/devto_article.md`)
+Drafted an article explaining the window boundary leak and why Redis Lua scripts are necessary to prevent race conditions.
 
-### Day 102 — Attacker Simulation Script (`loadtests/adversary_simulation.py`)
-- **Empirical Attack Measurements on Default Gateway:**
-  - *Vanilla Single-IP Burst (30 requests against limit of 10):* 10 allowed, 20 blocked. Bypass Rate: **0.0%**.
-  - *X-Forwarded-For Header Spoofing (30 requests with random IPs):* **30 allowed, 0 blocked**. Bypass Rate: **66.7%** (100% of requests admitted, leaking 200% over the nominal limit of 10).
-- **Artifact:** Automated attack harness in `loadtests/adversary_simulation.py`.
+### Day 90 : Community Showcase & Technical Defense (`docs/community_showcase_and_defense.md`)
+Compiled technical defense talking points addressing common questions about Redis persistence and distributed consensus.
 
-### Day 103 — Hardening Defenses: Trusted Proxy Validation (`src/middleware/trusted_proxy.py`)
-- **Remediation Implemented:**
-  1. *Peer Socket Verification:* The raw TCP peer IP (`request.client.host`) is checked against a configurable CIDR list of trusted proxies (`TRUSTED_PROXIES`). If the peer is NOT in a trusted network, `X-Forwarded-For` is completely ignored.
-  2. *Right-to-Left Traversal:* When requests pass through legitimate trusted proxies (e.g. AWS ALB, Cloudflare), the proxy chain is evaluated from right to left, isolating the first untrusted upstream IP and preventing client-prepended spoofed values from being selected.
-- **Post-Fix Empirical Verification:**
-  - Re-running `adversary_simulation.py` against untrusted peers:
-    - *Spoofed X-Forwarded-For:* **10 allowed, 20 blocked** (Bypass Rate: **0.0%**). All spoofed attempts are securely anchored to the raw socket peer IP.
+### Day 91 : Post-Launch Lessons Learned (`docs/lessons_learned_followup.md`)
+Wrote down mistakes I made during development, including using sync Redis inside async FastAPI routes and underestimating connection pool tuning.
 
-### Day 104 — Defense in Depth: Behavioral Anomaly Detection (`src/middleware/behavioral_shield.py`)
-- **Why Timing Jitter Matters:**
-  - Programmatic scripts (`while True: req(); time.sleep(0.1)`) exhibit near-zero timing variance: Coefficient of Variation $CV = \frac{\sigma}{\mu} < 0.05$.
-  - Legitimate human users reading content, scrolling, and clicking exhibit high entropy and variable intervals ($CV > 0.30$).
-- **Why "Apply a Stricter Limit and Flag for Review" Beats "Block Instantly":**
-  - Behavioral heuristics are probabilistic, not deterministic. Hard-blocking on behavioral scores risks creating catastrophic false-positive lockouts for legitimate power users, rapid typists, or accessibility tools.
-  - Temporarily downgrading a client to a restricted tier (e.g. 0.2x multiplier) curtails bot abuse while allowing legitimate users to continue operating with minor pacing, avoiding permanent friction.
-- **Verification:** Tested in `tests/test_behavioral_shield.py` with 100% pass rate.
+### Day 92 : 6th Algorithm: GCRA (Generic Cell Rate Algorithm)
+Implemented GCRA in Python and Redis Lua. It tracks a single theoretical arrival time per user, providing accurate rate limiting with minimal memory.
 
-### Day 105 — Red Team Report & Evolution of Understanding
-- **Artifact:** Published `docs/redteam_report.md` detailing attack vectors, before/after empirical numbers, and residual edge risks.
-- **Evolution of "Fake Free Trials" Understanding Since Day 1:**
-  - On Day 1, rate limiting felt like a straightforward arithmetic problem: count requests per second, decrement tokens, return 429 when empty.
-  - By Day 105, it is clear that rate limiting is a multi-layered security and identity challenge:
-    1. A single rate-limiting algorithm cannot defend an API against distributed abuse alone.
-    2. Attackers defeat IP limits with proxy pools, defeat key limits with account cycling, and exploit header trust to spoof identity.
-    3. True production resilience requires defense-in-depth: edge WAFs (TLS fingerprinting, ASN blocks), application-level distributed engines (RateFortress with atomic Lua and trusted proxy validation), behavioral anomaly scoring, and verified billing/identity gates at account creation.
-- **Milestone Reached:** 🎉 **Week 21 Complete! Adversary simulation, anti-spoofing trusted proxy validation, and behavioral shield operational.** All **172 automated tests passing**. Ready for Week 22: System Design Interview Mastery.
+### Day 93 : Redis Cluster & Sharding Architecture (`docs/scaling.md`)
+Documented how to shard keys across Redis Cluster nodes using hash tags so multi-key Lua operations stay on the same slot.
+
+### Day 94 : High-Throughput gRPC Alternative Interface
+Added a gRPC service using Protocol Buffers in src/grpc_service/, providing a fast binary transport option alongside REST.
+
+### Day 95 : Reusable Middleware Package (`pyproject.toml`)
+Packaged the middleware into a clean Python library with pyproject.toml so it can be installed independently.
+
+### Day 96 : Security Hardening & Zero-Downtime Key Rotation
+Audited header parsing and added key rotation logic so old keys remain valid during a migration grace period.
+
+### Day 100 : Capstone Milestone Reached & Retrospective
+Reviewed the core project. Having 165 automated tests passing made refactoring safe throughout.
 
 ---
 
-## 🏛️ Week 22 — System Design Interview Mastery (Days 106–110)
+## Week 21 : Adversarial Testing & Abuse Simulation (Days 101-105)
 
-### Day 106 — Capacity Planning & Back-of-the-Envelope Math (`docs/capacity_planning.md`)
-- **Mathematical Sizing for 1,000,000 req/s & 10M Active Users:**
-  - *Network Bandwidth:* At 250 bytes per TCP request/response, $1\text{M req/s} \times 250\text{ B} = 250\text{ MB/s} = \mathbf{2.0\text{ Gbps}}$ aggregate throughput.
-  - *Memory Overhead by Algorithm:*
-    - **GCRA:** $\approx 124\text{ bytes/key} \rightarrow \mathbf{1.24\text{ GB}}$ for 10M keys ($\mathbf{1.86\text{ GB}}$ with safety buffer).
-    - **Token Bucket:** $\approx 144\text{ bytes/key} \rightarrow \mathbf{1.44\text{ GB}}$ for 10M keys ($\mathbf{2.16\text{ GB}}$ with safety buffer).
-    - **Sliding Window Log:** $\approx 7,300\text{ bytes/key} \rightarrow \mathbf{73\text{ GB}}$ for 10M keys ($\mathbf{109.5\text{ GB}}$ with safety buffer).
-  - *Key Takeaway:* Sliding Window Log consumes **$58.8\times$ more memory** than Token Bucket at scale, proving why high-traffic public API gateways universally reject pure sliding window logs for standard endpoints.
-  - *Redis Cluster Sizing:* With single-core Lua execution capping safe throughput at $\approx 50,000\text{ ops/sec per shard}$, $1\text{M req/s}$ requires **20 Primary Shards + 20 Multi-AZ Replicas = 40 Redis nodes**.
+### Day 101 : Real-World Rate Limit Bypass Techniques
+Researched how attackers get around rate limiters using IP spoofing headers, rotated credentials, and distributed client networks.
 
-### Day 107 — Mock Interview #1: Single-Region Gateway (`docs/mock_interview_single_region.md`)
-- **Key Delivery Learnings:**
-  - Start with non-functional SLOs: latency budget ($p99 < 2.0\text{ ms}$) dictates in-memory Redis rather than relational DB or disk-backed storage.
-  - Defend Token Bucket clearly: decouples burst capacity from steady-state refill rate, matching real-world browser and mobile traffic patterns.
-  - Emphasize the concurrency failure mode: without atomic Lua scripts, concurrent threads create check-then-set race conditions that leak quota by $>150\%$.
-  - Articulate fail-open vs. fail-closed: fail-open preserves platform availability on content APIs during an infrastructure incident, while monetized checkout/AI endpoints should fail-closed with local in-memory fallback.
+### Day 102 : Attacker Simulation Script (`loadtests/adversary_simulation.py`)
+Wrote a test script that attempts to spoof X-Forwarded-For headers and rotate client IPs rapidly to bypass limits.
 
-### Day 108 — Mock Interview #2: Multi-Region Global Topology (`docs/mock_interview_multi_region.md`)
-- **The Transatlantic Speed-of-Light Bottleneck:**
-  - Fiber latency between US-East and EU-West is $\approx 80\text{ ms}$ round-trip. Synchronous cross-region database checks turn a 2ms rate check into an 82ms bottleneck.
-- **The Batched Token Lease Solution:**
-  - Local regions operate autonomous local Redis clusters.
-  - A global coordinator allocates quota in **token batch leases** (e.g., chunks of 20 tokens with a 5-second TTL).
-  - Gateways evaluate 95%+ of requests against local memory in $< 1\text{ ms}$, amortizing cross-region coordination by $20\times$.
-  - Network partitions degrade gracefully to local proportional caps without taking down the gateway.
+### Day 103 : Hardening Defenses: Trusted Proxy Validation (`src/middleware/trusted_proxy.py`)
+Built CIDR-based proxy validation so X-Forwarded-For headers are only trusted if the immediate upstream client IP is in a configured proxy list.
 
-### Day 109 — Architecture Decision Record (`docs/ADR-001-algorithm-choice.md`)
-- **Why Formal ADRs Elevate Technical Signal:**
-  - Moving beyond "I picked Token Bucket because it's popular" to documenting the exact context, alternatives considered, quantitative tradeoffs, and operational consequences using the standard Michael Nygard ADR format.
-  - Backed by our empirical benchmark data: GCRA (3.3M req/s pure Python, 6.7k req/s Redis) and Token Bucket (2.1M req/s pure Python, 6.5k req/s Redis) cited directly in the record.
+### Day 104 : Defense in Depth: Behavioral Anomaly Detection (`src/middleware/behavioral_shield.py`)
+Added a simple behavioral shield that tracks 429 frequency per IP and temporarily clamps down on suspicious traffic patterns.
 
-### Day 110 — Review, Interview Prep & Automated Math Validation
-- **Artifacts:** Updated `docs/interview_prep_and_defense.md` with capacity planning flashcards and multi-region defense scripts.
-- **Automated Validation:** Created `tests/test_system_design_calculations.py` to assert that all capacity planning equations, memory ratios, and ADR benchmark citations are programmatically verified in CI.
-- **Milestone Reached:** 🎉 **Week 22 Complete! System design interview mastery, capacity planning, and formal ADR documented and tested.**
+### Day 105 : Red Team Report & Evolution of Understanding
+Documented the adversary test findings in docs/redteam_report.md, showing that trusting arbitrary headers makes IP-based rate limiting useless.
 
 ---
 
-## 🖥️ Week 23 — Multi-Tenant Admin Dashboard (Days 111–115)
+## Week 22 : System Design Interview Mastery (Days 106-110)
 
-### Day 111 — Designing the Multi-Tenant Admin API (`src/api/admin.py`)
-- **Security Invariants for Administrative Endpoints:**
-  - Regular API keys must never grant administrative access. Administrative operations (`/api/v1/admin/*`) require dedicated admin credentials (`X-Admin-Key` or `Authorization: Bearer`).
-  - Validation uses constant-time comparison (`hmac.compare_digest`) to prevent timing attacks.
-- **Endpoints Implemented:**
-  - `GET /api/v1/admin/keys`: List all keys, metadata, tier, limit multiplier, and lifecycle status.
-  - `POST /api/v1/admin/keys`: Cryptographically secure key generation with tier and custom rate multipliers.
-  - `GET /api/v1/admin/keys/{key_id}`: Key inspection with secret masking.
-  - `PATCH /api/v1/admin/keys/{key_id}`: Real-time tier upgrades and multiplier adjustments.
-  - `POST /api/v1/admin/keys/{key_id}/rotate`: Zero-downtime key rotation with dual-validity grace periods.
-  - `DELETE /api/v1/admin/keys/{key_id}`: Immediate key revocation.
-  - `GET /api/v1/admin/keys/{key_id}/usage`: Real-time tenant quota consumption and status.
-  - `GET /api/v1/admin/summary`: Global system telemetry and tier distribution.
+### Day 106 : Capacity Planning & Back-of-the-Envelope Math (`docs/capacity_planning.md`)
+Calculated Redis memory and bandwidth requirements for 1 million requests per second. Made sure to account for Redis hash overhead in addition to raw values.
 
-### Day 112 — Persistent Key Store (`src/storage/key_store.py` & `scripts/seed_admin_keys.py`)
-- **Surviving Restarts Without Data Loss:**
-  - Built `KeyStore` abstract protocol with `RedisKeyStore` (persisting metadata in Redis hashes and active key sets) and `MemoryKeyStore` (in-memory fallback for testing).
-  - Integrated `KeyStore` into `APIKeyManager` so newly issued or rotated keys persist across server restarts.
-  - Created `scripts/seed_admin_keys.py` to seed default demo keys (`key_free_abc`, `key_paid_xyz`, `key_enterprise_999`).
+### Day 107 : Mock Interview #1: Single-Region Gateway (`docs/mock_interview_single_region.md`)
+Wrote out a full transcript for a single-region rate limiter interview, focusing on SLA requirements, storage trade-offs, and fail-open defaults.
 
-### Days 113 & 114 — Modern Admin Dashboard UI (`templates/admin.html`)
-- **UI Architecture:**
-  - Served at `GET /admin` and `GET /dashboard` directly via FastAPI `HTMLResponse`.
-  - Built with clean, responsive dark-themed styling without bulky third-party JavaScript dependencies.
-  - Features:
-    1. *Real-Time Stat Cards:* Active Keys, Total Keys, Rotating Keys, Engine Health.
-    2. *Tenant Management Table:* Filter by tier/status, masked keys, badges, and action triggers.
-    3. *Modals:* Interactive forms for issuing new keys, updating tiers, and initiating zero-downtime key rotations.
-    4. *Live Rate Limit Simulator:* An embedded interactive console allowing administrators to fire live test requests with any tenant key to `/api/test`, displaying live HTTP response status, latency, and a visual progress bar reflecting remaining quota!
+### Day 108 : Mock Interview #2: Multi-Region Global Topology (`docs/mock_interview_multi_region.md`)
+Documented a multi-region design where local clusters lease quota batches from a central store to avoid cross-region network latency on every request.
 
-### Day 115 — Integration Testing & Verification (`tests/test_admin_api.py`)
-- **Comprehensive Test Suite:**
-  - Tested unauthorized rejection (401) on missing/invalid admin tokens and regular user keys.
-  - Verified full CRUD lifecycle: issuance, retrieval, tier patching, zero-downtime rotation, revocation, and summary metrics.
-  - Validated middleware integration: newly issued keys with 50x multipliers immediately take effect in `RateLimitMiddleware` (e.g. limit expands from 10 to 500).
-  - Tested `RedisKeyStore` persistence lifecycle and dashboard UI endpoints.
-- **Milestone Reached:** 🎉 **Week 23 Complete! Multi-tenant admin API, persistent key store, seed automation, and interactive admin dashboard operational.** Test suite expanded to **180 automated tests passing with zero failures**.
+### Day 109 : Architecture Decision Record (`docs/ADR-001-algorithm-choice.md`)
+Wrote ADR-001 documenting why Token Bucket and GCRA were chosen as default algorithms over Sliding Window Log.
+
+### Day 110 : Review, Interview Prep & Automated Math Validation
+Wrote tests in tests/test_system_design_calculations.py to verify that capacity sizing formulas stay consistent and pass automated assertions.
 
 ---
 
-## 🛡️ Week 24 — Tiered Load-Shedding & Priority Request Queue (Days 116–120)
+## Week 23 : Multi-Tenant Admin Dashboard (Days 111-115)
 
-### Day 116 — Wiring PriorityRequestQueue for In-Flight Load Shedding
-- **Problem & Design Decision:**
-  - The codebase contained an in-memory `PriorityRequestQueue` (min-heap) that was orphaned. Under high concurrency, free and paid requests competed equally for ASGI worker capacity, causing degradation across all tiers.
-  - Selected **Option B (Shedding-under-saturation)** over Option A (Queue-before-dispatch). Option A forces every request through an async worker dispatch loop, introducing event-loop hops and head-of-line blocking even under healthy load. Option B preserves zero-latency pass-through when the gateway is healthy (`_active_requests < saturation_threshold`).
-  - Saturated load shedding: when active concurrent requests reach `RATEFORTRESS_SATURATION_THRESHOLD`, free/anonymous requests are shed fast with HTTP 503 (`Retry-After: 1`), reserving in-memory capacity for paid (`priority=1`) and enterprise (`priority=0`) requests to queue and drain in strict priority order.
+### Day 111 : Designing the Multi-Tenant Admin API (`src/api/admin.py`)
+Built REST endpoints to issue, view, update, rotate, and revoke API keys, secured by an admin secret header.
 
-### Day 117 — Known Architectural Constraint: In-Memory Multi-Worker Queue Boundary
-- **The Constraint (Interview & Portfolio Defense):**
-  - `PriorityRequestQueue` and the `_active_requests` counter are stored in-process memory within each Uvicorn ASGI worker.
-  - *Multi-Process Impact:* Running Uvicorn with `--workers 2` (or horizontal container replicas) isolates state per process. A saturation threshold of $N=100$ effectively behaves as $2 \times N = 200$ across two workers, and priority ordering is not globally synchronized (a paid request queued on Worker 1 cannot preempt an incoming free request handled by Worker 2 if Worker 2 is below its local threshold).
-  - *Production Solution (Week 25 / Chaos-Adjacent Addition):* Transition from in-memory heaps to a **Redis-backed distributed semaphore and priority queue** (using Redis Sorted Sets `ZSET` or Redis Streams with consumer groups). This synchronizes concurrency leases globally via atomic Lua scripts and guarantees cluster-wide priority scheduling across all worker nodes.
+### Day 112 : Persistent Key Store (`src/storage/key_store.py` & `scripts/seed_admin_keys.py`)
+Built RedisKeyStore to persist key metadata in Redis hashes and index active keys, with an in-memory fallback for local testing.
+
+### Day 115 : Integration Testing & Verification (`tests/test_admin_api.py`)
+Wrote integration tests for admin endpoints covering key creation, rotation grace periods, and unauthorized access rejection.
+
+### Day 116 : Wiring PriorityRequestQueue for In-Flight Load Shedding
+Integrated PriorityRequestQueue into the middleware so free requests get shed when server concurrency exceeds capacity thresholds.
+
+### Day 117 : Known Architectural Constraint: In-Memory Multi-Worker Queue Boundary
+Noticed that the in-memory priority queue is isolated per worker process. Across multiple Uvicorn workers, total admitted concurrency scales with worker count unless moved to Redis.
 
 ---
 
-## 🚀 Production Hardening Capstone (Days 141–143)
+## Follow-Up Improvements (Days 141-143)
 
-### Day 141 — Rate Limit by Compound Key (`src/middleware/rate_limit_middleware.py`)
-- **Multi-Dimensional Enforcement:**
-  - Single-dimension limiting creates blind spots: limiting only by IP penalizes multiple users behind corporate NAT proxies, while limiting only by API key allows an attacker with a stolen or free key to flood gateway sockets and bandwidth from one origin.
-  - RateFortress evaluates compound keys combining tenant identity, route namespace, and network IP (`format_compound_key`), simultaneously enforcing route/key quotas and a global per-IP ceiling.
-- **Why a Real API Demands BOTH Limits Simultaneously:**
-  - *Tenant Fairness vs. Network Protection:* A paid tenant may have a generous quota (e.g. 5,000 req/min), but if all 5,000 requests are fired in a single 100ms burst from one IP, they saturate the network socket buffers and event loop of a single gateway worker. The per-IP limit caps the burst rate from that network location, while the per-key limit meters total volume across all legitimate client locations.
-  - *Compound Resolution:* The middleware dynamically evaluates both limiters and enforces the stricter bound, setting `X-RateLimit-Scope: ip` or `X-RateLimit-Scope: key` and updating standard headers accordingly.
-- **Tests Added:** `tests/test_compound_rate_limiting.py` (4 tests verifying shared-IP isolation, multi-key fairness, and header accuracy).
+### Day 141 : Rate Limit by Compound Key (`src/middleware/rate_limit_middleware.py`)
+Added compound keys combining API key, route path, and IP address. This lets the gateway enforce both a per-key limit on a specific endpoint and a global per-IP limit simultaneously.
 
-### Day 142 — Warm-Up & Cold-Start Behavior (`src/api/main.py`)
-- **Memory Continuity vs. Distributed Persistence:**
-  - On restart, external Redis retains rate-limit quotas and sliding logs, but in-process state (circuit breaker error counters, open/closed flags, in-memory caches) resets completely.
-  - Cold instances start with a clean closed circuit breaker. If Redis was failing prior to restart, an optimistic startup would route production traffic to the new instance, causing immediate user-facing timeouts before the circuit breaker re-trips.
-- **Why a Readiness Check Can NEVER Return the Same as a Liveness Check:**
-  - *Liveness (`/health`):* Answers "Is the process event loop running?" If liveness fails, orchestrators send `SIGKILL` and restart the container. If liveness probed external Redis, a 2-second Redis network blip would trigger an immediate restart of all application gateway containers simultaneously, creating a catastrophic `CrashLoopBackOff` storm.
-  - *Readiness (`/health/ready`):* Answers "Can this instance safely serve user traffic right now?" If Redis is unreachable on cold start, `/health/ready` returns HTTP 503. The orchestrator removes the pod from the load balancer target group while keeping the container alive to retry connection establishment. Once Redis responds to `ping()`, readiness returns HTTP 200 and traffic resumes instantly.
-- **Tests Added:** `tests/test_cold_start_readiness.py` (6 tests verifying liveness isolation, readiness Redis probes, 503 on failure, and clean circuit breaker restarts).
+### Day 142 : Warm-Up & Cold-Start Behavior (`src/api/main.py`)
+Separated /health (liveness) from /health/ready (readiness). A restarted worker checks Redis connectivity before accepting traffic, preventing errors during rolling deploys.
 
-### Day 143 — Graceful Shutdown Handling (`src/middleware/rate_limit_middleware.py` & `src/api/main.py`)
-- **In-Flight Request Drain Mechanics:**
-  - When Docker/Kubernetes deploys a new release or scales down, it sends `SIGTERM` to the container.
-  - Without graceful shutdown, in-flight HTTP requests are severed mid-wire, causing clients to see `ECONNRESET`, `502 Bad Gateway`, or partial state mutations (e.g., token deducted in Redis but client received no response).
-  - RateFortress registers signal handlers for `SIGTERM` and `SIGINT`:
-    1. Sets `app.state.is_shutting_down = True`.
-    2. Any *new* requests arriving are rejected immediately with HTTP 503 (`Retry-After: 5`, detail: `"Server is shutting down. In-flight requests draining."`).
-    3. Readiness probe `/health/ready` immediately flips to 503, signaling upstream reverse proxies and load balancers to stop routing traffic.
-    4. In-flight requests (tracked via `_active_requests`) are granted a bounded grace period (default 10s, orchestrator `terminationGracePeriodSeconds: 15`) to complete and return HTTP 200.
-    5. `drain_in_flight()` completes once `_active_requests == 0`, and the process terminates cleanly with exit code 0.
-- **Tests Added:** `tests/test_graceful_shutdown.py` (3 tests verifying that in-flight slow requests complete successfully while concurrent new requests receive 503 during shutdown, readiness returns 503, and idle drain succeeds).
-- **Milestone Reached:** 🎉 **Capstone Production Hardening Complete! RateFortress verified with 211 automated tests passing with zero failures.**
+### Day 143 : Graceful Shutdown Handling (`src/middleware/rate_limit_middleware.py` & `src/api/main.py`)
+Added signal handling for SIGTERM and SIGINT. When the process gets a shutdown signal, it stops taking new traffic with 503 and drains in-flight requests within a grace period. With shutdown draining and cold-start health checks verified, the system is reliable across deployments and restarts. That completes the full 143-day engineering log.

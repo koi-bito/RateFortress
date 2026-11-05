@@ -1,9 +1,4 @@
-"""OpenTelemetry Distributed Tracing Instrumentation for RateFortress (Week 11).
-
-Provides distributed trace generation with custom child spans around rate limiting
-evaluations and Redis Lua script executions, revealing exact latency attribution
-between network I/O and application middleware logic.
-"""
+"""OpenTelemetry Distributed Tracing Instrumentation for RateFortress (Week 11)."""
 
 import contextlib
 import os
@@ -25,12 +20,10 @@ _tracer_provider: TracerProvider | None = None
 
 
 def get_tracer(name: str = "ratefortress") -> trace.Tracer:
-    """Returns a named tracer from the global or initialized TracerProvider."""
     return trace.get_tracer(name)
 
 
 def setup_tracing(app: Any | None = None) -> TracerProvider:
-    """Configures global OpenTelemetry TracerProvider and instruments FastAPI."""
     global _tracer_provider
     if _tracer_provider is None:
         resource = Resource.create(
@@ -66,7 +59,6 @@ def trace_rate_limiter_evaluation(
     tier: str,
     endpoint: str,
 ):
-    """Context manager adding a custom child span around rate limit decision and Redis calls."""
     tracer = get_tracer("ratefortress.limiter")
     with tracer.start_as_current_span(
         f"rate_limiter.{algorithm}",

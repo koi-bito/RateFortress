@@ -1,8 +1,4 @@
-"""Asynchronous Redis-backed Token Bucket rate limiting algorithm using atomic Lua scripting.
-
-Guarantees full atomicity across distributed application instances while executing
-asynchronously on the redis.asyncio event loop.
-"""
+"""Asynchronous Redis-backed Token Bucket rate limiting algorithm using atomic Lua scripting."""
 
 import time
 from pathlib import Path
@@ -39,7 +35,6 @@ class AsyncRedisTokenBucket:
         return f"token_bucket:{self.namespace}:{user_id}"
 
     async def is_allowed(self, user_id: str, tokens: int = 1) -> bool:
-        """Evaluates whether user_id is permitted to consume `tokens` asynchronously."""
         if tokens <= 0:
             raise ValueError("Requested tokens must be positive.")
 
@@ -52,7 +47,6 @@ class AsyncRedisTokenBucket:
         return bool(res[0])
 
     async def remaining(self, user_id: str) -> int:
-        """Returns the available integer token count without consuming tokens."""
         key = self._key(user_id)
         now = time.time()
         res = await self._script(
@@ -65,7 +59,6 @@ class AsyncRedisTokenBucket:
         return await self.remaining(user_id)
 
     async def retry_after(self, user_id: str) -> int:
-        """Returns the seconds to wait until at least 1 token is refilled."""
         key = self._key(user_id)
         now = time.time()
         res = await self._script(

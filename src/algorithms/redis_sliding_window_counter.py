@@ -1,9 +1,4 @@
-"""Redis-backed Sliding Window Counter rate limiting algorithm using atomic Lua scripting.
-
-Blends counts from the previous and current fixed windows stored in Redis,
-weighted by the elapsed fraction of the active window, delivering an O(1)
-memory footprint with boundary-burst smoothing across distributed server nodes.
-"""
+"""Redis-backed Sliding Window Counter rate limiting algorithm using atomic Lua scripting."""
 
 import time
 from pathlib import Path
@@ -47,7 +42,6 @@ class RedisSlidingWindowCounter:
         return current_key, prev_key, weight_of_previous, elapsed_in_window
 
     def is_allowed(self, user_id: str) -> bool:
-        """Atomically evaluates whether user_id is permitted to perform a request."""
         now = time.time()
         current_key, prev_key, weight_prev, _ = self._keys(user_id, now)
         ttl = int(self.window_seconds * 2) + 2
@@ -59,7 +53,6 @@ class RedisSlidingWindowCounter:
         return bool(res[0])
 
     def remaining(self, user_id: str) -> int:
-        """Returns the estimated remaining quota for user_id in the sliding window."""
         now = time.time()
         current_key, prev_key, weight_prev, _ = self._keys(user_id, now)
         ttl = int(self.window_seconds * 2) + 2
@@ -74,7 +67,6 @@ class RedisSlidingWindowCounter:
         return self.remaining(user_id)
 
     def retry_after(self, user_id: str) -> int:
-        """Returns the estimated seconds until the rate limit will permit a new request."""
         now = time.time()
         current_key, prev_key, weight_prev, _ = self._keys(user_id, now)
         ttl = int(self.window_seconds * 2) + 2

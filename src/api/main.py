@@ -29,7 +29,6 @@ def create_app(
     global_ip_limit: int | None = None,
     global_ip_window: int | None = None,
 ) -> FastAPI:
-    """Application factory supporting configurable rate limiting backends."""
     active_backend = backend or os.getenv("RATEFORTRESS_BACKEND", "memory").lower()
 
     redis_sync = None
@@ -157,17 +156,14 @@ def create_app(
 
     @application.get("/")
     def root():
-        """Service health and root metadata."""
         return {"status": "ok", "service": "RateFortress", "version": "0.1.0"}
 
     @application.get("/health")
     def health():
-        """Liveness check endpoint."""
         return {"status": "healthy"}
 
     @application.get("/health/ready")
     async def readiness():
-        """Day 142 Readiness check: verifies backend connectivity and service availability."""
         if getattr(application.state, "is_shutting_down", False):
             return JSONResponse(
                 status_code=503,
@@ -215,24 +211,20 @@ def create_app(
 
     @application.get("/metrics")
     def metrics():
-        """Prometheus scrape endpoint exposing gateway telemetry."""
         payload, content_type = get_metrics_payload()
         return Response(content=payload, media_type=content_type)
 
     @application.get("/api/slow-request")
     async def slow_request(delay: float = 0.5):
-        """Day 143 Test endpoint: artificial delay to verify in-flight request completion during shutdown."""
         await asyncio.sleep(delay)
         return {"status": "completed", "delayed_seconds": delay}
 
     @application.get("/api/test")
     def test_endpoint():
-        """Standard test endpoint with default rate limits."""
         return {"message": "This endpoint is protected by RateFortress."}
 
     @application.get("/api/expensive-endpoint")
     def expensive_endpoint():
-        """Simulated resource-heavy endpoint with strict sliding window log limits."""
         return {
             "message": "Expensive computation or database query completed successfully."
         }
@@ -246,7 +238,6 @@ def create_app(
     @application.get("/admin", response_class=HTMLResponse)
     @application.get("/dashboard", response_class=HTMLResponse)
     def admin_dashboard():
-        """Serves the RateFortress multi-tenant administrative dashboard UI."""
         html_path = Path(__file__).resolve().parents[2] / "templates" / "admin.html"
         if html_path.exists():
             return HTMLResponse(content=html_path.read_text(encoding="utf-8"))

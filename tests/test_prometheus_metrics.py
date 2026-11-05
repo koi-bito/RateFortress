@@ -1,4 +1,4 @@
-"""Integration and unit tests for Prometheus observability in RateFortress (Week 10)."""
+"""Integration and unit tests for Prometheus observability in RateFortress."""
 
 from fastapi.testclient import TestClient
 
@@ -7,7 +7,7 @@ from src.monitoring.metrics import get_metrics_payload
 
 
 def test_metrics_endpoint_returns_prometheus_format():
-    """Confirms /metrics returns HTTP 200 and standard Prometheus text payload."""
+    """Check /metrics returns HTTP 200 and standard Prometheus text payload."""
     app = create_app(backend="memory")
     client = TestClient(app)
 
@@ -18,7 +18,7 @@ def test_metrics_endpoint_returns_prometheus_format():
 
 
 def test_request_and_block_counters_increment():
-    """Verifies that allowed and blocked requests increment respective Prometheus counters."""
+    """Check allowed and blocked requests increment respective Prometheus counters."""
     app = create_app(backend="memory")
     client = TestClient(app)
 
@@ -48,7 +48,7 @@ def test_request_and_block_counters_increment():
 
 
 def test_limiter_overhead_histogram_recorded():
-    """Verifies that rate limiter execution overhead is captured in Prometheus histogram."""
+    """Check rate limiter execution overhead is captured in Prometheus histogram."""
     app = create_app(backend="memory")
     client = TestClient(app)
 
@@ -78,10 +78,7 @@ def test_metrics_endpoint_respects_rate_limiting():
 
 
 def test_multiprocess_metrics_aggregation(tmp_path, monkeypatch):
-    """Bug 8 verification: confirms get_metrics_payload() aggregates multi-process metrics
-
-    correctly without crashing or flapping when PROMETHEUS_MULTIPROC_DIR is configured.
-    """
+    """Bug 8 verification: confirms get_metrics_payload() aggregates multi-process metrics."""
     multiproc_dir = tmp_path / "multiproc"
     multiproc_dir.mkdir()
     monkeypatch.setenv("PROMETHEUS_MULTIPROC_DIR", str(multiproc_dir))

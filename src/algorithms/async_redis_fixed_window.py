@@ -1,8 +1,4 @@
-"""Asynchronous Redis-backed Fixed Window Counter rate limiting algorithm.
-
-Performs non-blocking atomic INCR and EXPIRE operations using redis.asyncio,
-ensuring the ASGI event loop remains completely unblocked during rate evaluation.
-"""
+"""Asynchronous Redis-backed Fixed Window Counter rate limiting algorithm."""
 
 import time
 from typing import Any
@@ -35,7 +31,6 @@ class AsyncRedisFixedWindow:
         return f"fixed_window:{self.namespace}:{user_id}:{current_window}"
 
     async def is_allowed(self, user_id: str) -> bool:
-        """Determines if a request from user_id is permitted in the current window."""
         now = time.time()
         current_window, _ = self._get_window_info(now)
         key = self._key(user_id, current_window)
@@ -49,7 +44,6 @@ class AsyncRedisFixedWindow:
         return count <= self.limit
 
     async def remaining(self, user_id: str) -> int:
-        """Returns the remaining request quota for user_id in the active window."""
         current_window, _ = self._get_window_info()
         key = self._key(user_id, current_window)
         val = await self.r.get(key)
@@ -60,7 +54,6 @@ class AsyncRedisFixedWindow:
         return await self.remaining(user_id)
 
     async def retry_after(self, user_id: str) -> int:
-        """Returns the number of seconds until the current window resets."""
         _, retry_seconds = self._get_window_info()
         return retry_seconds
 

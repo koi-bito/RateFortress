@@ -1,10 +1,4 @@
-"""Consolidated test suite for all Redis-backed rate limiting algorithms (Day 38).
-
-Covers:
-- RedisFixedWindow
-- RedisSlidingWindowCounter
-- RedisSlidingWindowLog
-"""
+"""Tests for all Redis-backed rate limiting algorithms."""
 
 import time
 

@@ -1,9 +1,4 @@
-"""Sliding Window Counter rate limiting algorithm.
-
-Blends the previous and current fixed window counts, weighted by
-how far into the current window the current request is, to approximate
-a true sliding window with O(1) memory and O(1) time complexity.
-"""
+"""Sliding Window Counter rate limiting algorithm."""
 
 import time
 from collections.abc import Callable
@@ -12,14 +7,7 @@ from cachetools import LRUCache
 
 
 class SlidingWindowCounter:
-    """Sliding Window Counter rate limiter (weighted approximation).
-
-    Attributes:
-        limit: Maximum number of allowed requests in the estimated window.
-        window_seconds: Duration of each fixed window in seconds.
-        max_clients: Maximum client entries retained in memory before LRU eviction.
-        now_fn: Callable returning current time in seconds (default: time.time).
-    """
+    """Sliding Window Counter rate limiter (weighted approximation)."""
 
     def __init__(
         self,
@@ -58,14 +46,6 @@ class SlidingWindowCounter:
             self.window_id[user_id] = current_id
 
     def is_allowed(self, user_id: str) -> bool:
-        """Determines if a request by user_id is permitted under the weighted sliding window estimate.
-
-        Args:
-            user_id: Unique identifier for the client/user.
-
-        Returns:
-            True if request is permitted, False if rate limit is exceeded.
-        """
         now = self._now()
         current_id = int(now // self.window_seconds)
         elapsed_in_window = now % self.window_seconds
@@ -84,7 +64,6 @@ class SlidingWindowCounter:
         return False
 
     def get_estimated_count(self, user_id: str) -> float:
-        """Returns the current estimated request count for user_id."""
         now = self._now()
         current_id = int(now // self.window_seconds)
         elapsed_in_window = now % self.window_seconds
@@ -98,12 +77,10 @@ class SlidingWindowCounter:
         )
 
     def get_remaining(self, user_id: str) -> int:
-        """Returns remaining estimated capacity for user_id."""
         estimated = self.get_estimated_count(user_id)
         return max(0, int(self.limit - estimated))
 
     def get_retry_after(self, user_id: str) -> int:
-        """Returns seconds until current window expires and weight resets."""
         if self.get_remaining(user_id) > 0:
             return 0
         now = self._now()

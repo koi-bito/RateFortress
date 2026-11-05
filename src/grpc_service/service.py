@@ -1,8 +1,4 @@
-"""gRPC RateLimiter service implementation for RateFortress.
-
-Allows high-throughput internal microservices to evaluate rate limits over
-binary Protocol Buffers / HTTP/2 transport instead of REST/JSON.
-"""
+"""gRPC RateLimiter service implementation for RateFortress."""
 
 from __future__ import annotations
 
@@ -123,7 +119,6 @@ def create_grpc_server(
     max_workers: int = 10,
     default_algorithm: str = "token_bucket",
 ) -> tuple[grpc.Server, int]:
-    """Factory creating and binding a configured gRPC server."""
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=max_workers))
     ratefortress_pb2_grpc.add_RateLimiterServicer_to_server(
         RateLimiterService(default_algorithm=default_algorithm), server

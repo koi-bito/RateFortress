@@ -1,4 +1,4 @@
-"""Unit and integration tests for the Week 12 Algorithm Comparison Engine."""
+"""Tests for the Algorithm Comparison Engine."""
 
 from pathlib import Path
 
@@ -11,7 +11,7 @@ client = TestClient(app)
 
 
 def test_compare_endpoint_json_default():
-    """Validates default GET /compare returns structured JSON across all 5 algorithms."""
+    """Check default GET /compare returns structured JSON across all 5 algorithms."""
     response = client.get("/compare")
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("application/json")
@@ -47,7 +47,7 @@ def test_compare_endpoint_json_default():
         assert round(r["allowed_pct"] + r["blocked_pct"], 1) == 100.0
         assert r["avg_latency_ms"] >= 0.0
 
-        # Validate qualitative tradeoff schema
+        # Check qualitative tradeoff schema
         tradeoffs = r["tradeoffs"]
         assert len(tradeoffs["accuracy"]) > 10
         assert len(tradeoffs["memory"]) > 5
@@ -55,13 +55,13 @@ def test_compare_endpoint_json_default():
         assert len(tradeoffs["fairness"]) > 10
         assert len(tradeoffs["ideal_scenario"]) > 10
 
-        # Validate fairness block schema
+        # Check fairness block schema
         fairness = r["fairness"]
         assert fairness["favors"] in ("bursty", "steady", "neutral")
 
 
 def test_compare_endpoint_custom_query_params():
-    """Validates custom user, request count, window, limit, and pattern parameters."""
+    """Check custom user, request count, window, limit, and pattern parameters."""
     response = client.get(
         "/compare?users=15&requests_per_user=20&window=6&limit=8&pattern=uniform"
     )
@@ -81,7 +81,7 @@ def test_compare_endpoint_custom_query_params():
 
 
 def test_compare_endpoint_html_content_negotiation():
-    """Validates that Accept: text/html returns the rendered Jinja2 HTML report."""
+    """Check Accept: text/html returns the rendered Jinja2 HTML report."""
     response = client.get("/compare", headers={"Accept": "text/html"})
     assert response.status_code == 200
     assert "text/html" in response.headers["content-type"]
@@ -99,7 +99,7 @@ def test_compare_endpoint_html_content_negotiation():
 
 
 def test_compare_endpoint_format_query_override():
-    """Validates that ?format=html and ?format=json override Accept headers."""
+    """Check ?format=html and ?format=json override Accept headers."""
     # Format query param requests HTML even without Accept header
     html_resp = client.get("/compare?format=html")
     assert html_resp.status_code == 200
@@ -112,7 +112,7 @@ def test_compare_endpoint_format_query_override():
 
 
 def test_compare_skewed_traffic_fairness():
-    """Validates skewed traffic simulation comparing bursty (20%) and steady (80%) clients."""
+    """Check skewed traffic simulation comparing bursty (20%) and steady (80%) clients."""
     response = client.get(
         "/compare?users=20&requests_per_user=25&window=10&limit=10&pattern=skewed"
     )
@@ -155,7 +155,7 @@ def test_synthetic_traffic_generator_distribution():
 
 
 def test_compare_endpoint_validation_errors():
-    """Validates HTTP 422 for out-of-bounds parameters."""
+    """Check HTTP 422 for out-of-bounds parameters."""
     # Users < 1
     resp_zero_users = client.get("/compare?users=0")
     assert resp_zero_users.status_code == 422
@@ -174,7 +174,7 @@ def test_compare_endpoint_validation_errors():
 
 
 def test_tradeoffs_documentation_consistency():
-    """Confirms that docs/tradeoffs.md exists and covers all algorithms in catalog."""
+    """Check docs/tradeoffs.md exists and covers all algorithms in catalog."""
     docs_path = Path(__file__).resolve().parents[1] / "docs" / "tradeoffs.md"
     assert docs_path.exists(), "docs/tradeoffs.md must exist"
 

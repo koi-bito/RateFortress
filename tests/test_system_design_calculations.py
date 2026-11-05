@@ -1,11 +1,11 @@
-"""Validation tests for Week 22 System Design Capacity Planning and Math Invariants."""
+"""Tests for System Design Capacity Planning and Math Invariants."""
 
 import math
 from pathlib import Path
 
 
 def test_capacity_planning_doc_exists_and_consistent():
-    """Validates that all Week 22 system design documents exist and contain required sections."""
+    """Check all system design documents exist and contain required sections."""
     docs_dir = Path("docs")
     cap_doc = docs_dir / "capacity_planning.md"
     mock_single = docs_dir / "mock_interview_single_region.md"
@@ -55,7 +55,7 @@ def test_capacity_math_invariants():
 
 
 def test_adr_contains_empirical_benchmark_evidence():
-    """Ensures ADR-001 references our real benchmark figures."""
+    """Check ADR-001 references our real benchmark figures."""
     adr_path = Path("docs") / "ADR-001-algorithm-choice.md"
     text = adr_path.read_text(encoding="utf-8")
 

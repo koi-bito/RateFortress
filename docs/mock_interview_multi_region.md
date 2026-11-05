@@ -1,69 +1,40 @@
-# Mock System Design Interview #2 — Multi-Region Distributed Rate Limiter
+# Mock System Design Interview: Multi-Region Distributed Rate Limiter
 
-This document captures an advanced senior/staff-level system design interview focusing on the hard distributed systems challenge: **building a globally distributed rate limiter operating across multiple geographical regions (US, EU, APAC) with sub-2ms latency**.
+These are my walkthrough notes for an advanced interview on designing a globally distributed rate limiter operating across multiple geographic regions with low latency.
 
 ---
 
-## 1. The Fundamental Problem: Speed of Light vs. Strict Consistency
+## 1. Network Physics vs Strict Consistency
 
-In a single-region deployment, all gateway workers access an in-region Redis cluster over local VPC fiber ($< 0.8\text{ ms}$ round trip time).
+In a single-region setup, gateway workers access a local Redis cluster over local VPC fiber with round-trip times well under 1 ms.
 
-In a global deployment:
-- **US-East (N. Virginia) to EU-West (Frankfurt):** $\approx 75 - 90\text{ ms}$ RTT.
-- **US-West (Oregon) to APAC (Tokyo):** $\approx 110 - 130\text{ ms}$ RTT.
+In a multi-region deployment across continents, network latency sets a hard limit:
+- US-East to EU-West: roughly 75 to 90 ms round trip.
+- US-West to APAC: roughly 110 to 130 ms round trip.
 
-### The CAP Dilemma:
-If a client has a global quota of **$100\text{ requests / minute}$** and can route requests interchangeably to US and EU gateways:
-- If we demand **Strict Global Consistency (CP)**, every request in EU must synchronously contact a centralized database in US before responding $\rightarrow$ **Latency explodes from $1\text{ ms}$ to $90\text{ ms}$**, violating the non-functional latency SLO ($< 2\text{ ms}$).
-- If we demand **Local Low Latency (AP)**, regions must evaluate requests independently $\rightarrow$ **Eventual consistency creates a window of over-admission** where an attacker could fire 100 requests in US and 100 in EU simultaneously within the cross-region sync window.
+If a client has a global limit of 100 requests per minute and can hit US and European gateways interchangeably, we face a tradeoff:
+- If we require strict global consistency on every call, every European request must contact a central store in the US before answering. Latency jumps to 90 ms, violating our latency target.
+- If regions evaluate requests independently, eventual consistency creates a window where an abuser could send 100 requests in the US and 100 in Europe within the synchronization lag.
 
 ---
 
 ## 2. Architectural Approaches Evaluated
 
-```
-                     Approach Comparison
-┌──────────────────────────────┬───────────────────┬───────────────────┐
-│ Approach                     │ Latency (p99)     │ Accuracy          │
-├──────────────────────────────┼───────────────────┼───────────────────┤
-│ 1. Centralized Global Redis  │ 80–120 ms (FAIL)  │ 100% Strict       │
-│ 2. Active-Active CRDT Sync   │ < 1.5 ms  (PASS)  │ Soft (±20% burst) │
-│ 3. Static Quota Partitioning │ < 1.0 ms  (PASS)  │ Fragmented Quota  │
-│ 4. Batched Token Leasing     │ < 1.2 ms  (PASS)  │ 98–99% Accurate   │
-└──────────────────────────────┴───────────────────┴───────────────────┘
-```
-
-### Approach 1: Centralized Single-Leader Redis (Rejected)
-- Deploy primary Redis in `us-east-1`; EU and APAC gateways call it over cross-region VPC peering.
-- **Verdict:** **REJECTED.** Adds 80–130ms latency to every international API call. Catastrophic for user-facing applications.
+### Approach 1: Centralized Global Redis
+Deploying a single primary Redis in US-East and having European and Asian gateways call it over cross-region VPC peering fails immediately. Adding 80 to 130 ms of latency to every international API call is unacceptable for user-facing applications.
 
 ### Approach 2: Active-Active Asynchronous CRDT Replication
-- Run a full Redis cluster in each region (US, EU, APAC).
-- Replicate counters across regions asynchronously using conflict-free replicated data types (CRDTs / PN-Counters).
-- **Behavior:**
-  - Local increments are instantaneous ($< 1\text{ ms}$).
-  - Counters sync in the background over cross-region links within $150 - 300\text{ ms}$.
-- **Tradeoff:** A transient burst split across two regions within 200ms can admit up to $2\times$ the configured limit before synchronization converges. Acceptable for bot abuse prevention; unacceptable for billing / credit enforcement.
+Running a Redis cluster in each region and syncing counters asynchronously in the background using conflict-free replicated data types keeps local evaluations fast (under 1 ms). However, during the 150 to 300 ms sync window, an abuser can consume double their quota. This is acceptable for anti-scraping rules, but risky for billing meters.
 
-### Approach 3: Static Regional Quota Partitioning (Token Slicing)
-- Divide global quota statically based on expected regional traffic shares:
-  - Global Quota: $100\text{ req/min}$
-  - US-East ($60\%$ traffic): $60\text{ tokens}$
-  - EU-West ($40\%$ traffic): $40\text{ tokens}$
-- **Advantage:** Zero cross-region communication during request evaluation; each region runs standard RateFortress Token Bucket / GCRA locally.
-- **Drawback:** Inflexible. If a European developer travels to the US or shifts traffic during US business hours, they get throttled at 60 req/min despite having 40 unused tokens sitting idle in Frankfurt.
+### Approach 3: Static Regional Quota Partitioning
+Dividing global quotas statically across regions based on expected traffic shares avoids cross-region network calls completely. The downside is rigidity: if a European user moves their traffic to US hours, they get throttled early while their European quota sits unused.
 
-### Approach 4: Dynamic Batched Token Leasing (The Recommended Production Model)
-- **Architecture:**
-  - Each region runs a local Redis cluster and local RateFortress instances.
-  - A global token lease coordinator acts as the source of truth for total available quota chunks.
-  - Local gateways do **not** acquire 1 token per request from the global store. Instead, they request **token leases in batches** (e.g. chunks of $10 - 50\text{ tokens}$ with a 5-second TTL).
-  - High-frequency requests are served out of the pre-fetched local batch in $< 1\text{ ms}$.
-  - When the local batch falls below a low-water mark (e.g. 20% remaining), an asynchronous background thread requests the next lease from the coordinator.
-- **Advantage:**
-  - Per-request latency remains purely local ($< 1\text{ ms}$).
-  - Cross-region calls are amortized: $1\text{ global call per 50 user requests}$ rather than $1\text{ per request}$.
-  - Over-admission risk is strictly capped to the unexpired local lease buffer ($< 5\%$).
+### Approach 4: Dynamic Batched Token Leasing (Recommended Model)
+Each region runs a local Redis cluster and local gateway instances. A global quota coordinator tracks overall quota pools.
+
+Local gateways do not acquire tokens one by one from the global store. Instead, they pre-fetch token leases in batches, such as 20 to 50 tokens with a 5-second lease window.
+
+Requests are served out of the pre-fetched local batch in under 1 ms. When the local batch dips below 20% remaining, an asynchronous background task requests the next lease from the coordinator. This keeps per-request latency local while capping over-admission risk to the active lease buffer.
 
 ---
 
@@ -93,21 +64,19 @@ If a client has a global quota of **$100\text{ requests / minute}$** and can rou
 
 ---
 
-## 4. Handling Network Partitions & Split-Brain (Transatlantic Cable Cut)
+## 4. Handling Partitions and Cable Cuts
 
 If cross-region fiber cuts disconnect US-East from EU-West:
-1. **Local Autonomy:** Local regions immediately detect lease acquisition timeouts.
-2. **Degraded Mode Policy:**
-   - **Proportional Cap:** Regions switch to conservative local quotas (e.g., local region permits at most $50\%$ of nominal limit).
-   - **Fail-Open for Public Endpoints:** Continue serving standard traffic to maintain platform availability.
-   - **Fail-Closed for Expensive Endpoints:** Prevent financial loss on OpenAI/Stripe downstream invocations.
-3. **Reconnection & Convergence:** When connectivity restores, uncommitted lease differentials reconcile via additive reconciliation without requiring manual operator intervention.
+1. Local autonomy: Local regions detect lease acquisition timeouts and continue operating independently.
+2. Degraded policy: Regions can switch to conservative local quotas (such as allowing 50% of nominal quota) during the outage.
+3. Fail-open for public routes: Standard content endpoints remain reachable.
+4. Fail-closed for expensive routes: Paid third-party invocations are clamped to prevent financial runaway.
+5. Reconnection: When connectivity returns, uncommitted lease differentials reconcile without manual intervention.
 
 ---
 
-## 5. Senior Interviewer Defense Talking Points
+## 5. Defense Talking Points
 
-- **Latency is King:** In API infrastructure, an extra 80ms of overhead on every request is a dealbreaker. Any design claiming "strict global ACID consistency across continents for high-volume rate limiting" reveals a fundamental misunderstanding of network physics.
-- **The 95/5 Rule:** 95% of API clients originate from a single primary geographic region (where their backend servers run). Only roaming mobile users or multi-region distributed clients span continents.
-- **Defense in Depth:** Combine global batched token leasing with a fast edge CDN rate limiter (Cloudflare/Fastly WAF) at Layer 7 for raw DDoS, reserving RateFortress for fine-grained multi-tier business quota management.
-
+- Latency is the primary constraint: Adding 80 ms of latency to every single API request is not an option. Any design claiming strict global ACID consistency across continents for high-throughput rate limiting ignores network reality.
+- Most clients stay in one region: Around 95% of API traffic originates from a client's primary region where their servers run. Only roaming mobile users frequently cross continents.
+- Layered defense: Pair global batched token leasing with an edge CDN rate limiter for raw layer-7 volumetric protection, reserving RateFortress for fine-grained tenant tier enforcement.

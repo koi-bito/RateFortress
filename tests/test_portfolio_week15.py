@@ -1,4 +1,4 @@
-"""Tests for Week 15: Documentation, Architecture Diagram, Demo Script, and Interview Defense."""
+"""Tests for Documentation, Architecture Diagram, Demo Script, and Interview Defense."""
 
 from pathlib import Path
 
@@ -6,7 +6,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_architecture_diagram_exists_and_valid():
-    """Validates docs/architecture.svg exists and renders key system components."""
+    """Check docs/architecture.svg exists and renders key system components."""
     svg_path = PROJECT_ROOT / "docs" / "architecture.svg"
     assert svg_path.exists(), "docs/architecture.svg must exist"
 
@@ -22,7 +22,7 @@ def test_architecture_diagram_exists_and_valid():
 
 
 def test_readme_portfolio_quality():
-    """Validates README.md structure, badges, benchmark table, and resume bullets."""
+    """Check README.md structure, badges, benchmark table, and resume bullets."""
     readme_path = PROJECT_ROOT / "README.md"
     assert readme_path.exists(), "README.md must exist"
 
@@ -39,7 +39,7 @@ def test_readme_portfolio_quality():
 
 
 def test_demo_script_and_walkthrough():
-    """Validates docs/demo_script_and_walkthrough.md structure and content."""
+    """Check docs/demo_script_and_walkthrough.md structure and content."""
     demo_path = PROJECT_ROOT / "docs" / "demo_script_and_walkthrough.md"
     assert demo_path.exists(), "docs/demo_script_and_walkthrough.md must exist"
 
@@ -52,7 +52,7 @@ def test_demo_script_and_walkthrough():
 
 
 def test_interview_prep_guide():
-    """Validates docs/interview_prep_and_defense.md covers system design defense."""
+    """Check docs/interview_prep_and_defense.md covers system design defense."""
     guide_path = PROJECT_ROOT / "docs" / "interview_prep_and_defense.md"
     assert guide_path.exists(), "docs/interview_prep_and_defense.md must exist"
 

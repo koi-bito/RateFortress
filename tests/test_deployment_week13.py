@@ -1,4 +1,4 @@
-"""Tests for Week 13: Dockerization, Cloud Deployment, and Smoke Testing Harness."""
+"""Tests for Dockerization, Cloud Deployment, and Smoke Testing Harness."""
 
 import json
 from pathlib import Path
@@ -14,7 +14,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_dockerfile_configuration():
-    """Validates Dockerfile syntax, multi-stage copying, and healthcheck definitions."""
+    """Check Dockerfile syntax, multi-stage copying, and healthcheck definitions."""
     dockerfile_path = PROJECT_ROOT / "Dockerfile"
     assert dockerfile_path.exists(), "Dockerfile must exist at project root"
 
@@ -31,7 +31,7 @@ def test_dockerfile_configuration():
 
 
 def test_docker_compose_configuration():
-    """Validates docker-compose.yml services, healthchecks, networks, and volumes."""
+    """Check docker-compose.yml services, healthchecks, networks, and volumes."""
     compose_path = PROJECT_ROOT / "docker-compose.yml"
     assert compose_path.exists(), "docker-compose.yml must exist at project root"
 
@@ -42,7 +42,7 @@ def test_docker_compose_configuration():
     required_services = {"ratefortress", "redis", "prometheus", "grafana", "loki", "promtail"}
     assert required_services.issubset(set(services.keys()))
 
-    # Verify ratefortress container configuration
+    # Check ratefortress container configuration
     app_svc = services["ratefortress"]
     assert "ports" in app_svc and "8000:8000" in app_svc["ports"]
     env = app_svc.get("environment", [])
@@ -50,13 +50,13 @@ def test_docker_compose_configuration():
     assert any("RATEFORTRESS_BACKEND=" in item for item in env)
     assert "redis" in str(app_svc.get("depends_on", {}))
 
-    # Verify redis container configuration
+    # Check redis container configuration
     redis_svc = services["redis"]
     assert "healthcheck" in redis_svc
     assert "redis-cli" in str(redis_svc["healthcheck"])
     assert "volatile-lru" in str(redis_svc.get("command", []))
 
-    # Verify networks and volumes
+    # Check networks and volumes
     assert "networks" in data and "ratefortress-net" in data["networks"]
     volumes = data.get("volumes", {})
     assert "redis-data" in volumes
@@ -66,7 +66,7 @@ def test_docker_compose_configuration():
 
 
 def test_render_blueprint_configuration():
-    """Validates render.yaml blueprint schema for Render.com deployment."""
+    """Check render.yaml blueprint schema for Render.com deployment."""
     render_path = PROJECT_ROOT / "render.yaml"
     assert render_path.exists(), "render.yaml must exist at project root"
 
@@ -89,7 +89,7 @@ def test_render_blueprint_configuration():
 
 
 def test_railway_configuration():
-    """Validates railway.json deployment specification."""
+    """Check railway.json deployment specification."""
     railway_path = PROJECT_ROOT / "railway.json"
     assert railway_path.exists(), "railway.json must exist at project root"
 
@@ -99,7 +99,7 @@ def test_railway_configuration():
 
 
 def test_cloud_deployment_guide_completeness():
-    """Confirms docs/cloud_deployment_guide.md covers all major deployment targets."""
+    """Check docs/cloud_deployment_guide.md covers all major deployment targets."""
     guide_path = PROJECT_ROOT / "docs" / "cloud_deployment_guide.md"
     assert guide_path.exists(), "docs/cloud_deployment_guide.md must exist"
 
@@ -112,7 +112,7 @@ def test_cloud_deployment_guide_completeness():
 
 
 def test_smoke_test_script_with_testclient():
-    """Validates that smoke test logic succeeds when run against the active application."""
+    """Check smoke test logic succeeds when run against the active application."""
     client = TestClient(app)
 
     # Mock make_request using the starlette TestClient

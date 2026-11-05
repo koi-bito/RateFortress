@@ -90,7 +90,7 @@ def test_failed_probe_in_half_open_reopens_immediately():
 
 
 def test_interleaved_failures_and_successes_reset_count_while_closed():
-    """Verifies that successes in STATE_CLOSED reset failure count, preventing sporadic errors from tripping the breaker."""
+    """Check successes in STATE_CLOSED reset failure count, preventing sporadic errors from tripping the breaker."""
     cb = CircuitBreaker(failure_threshold=3, recovery_timeout=10.0, fail_open=True)
 
     def failing_call():

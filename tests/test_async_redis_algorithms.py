@@ -1,8 +1,4 @@
-"""Tests for Asynchronous Redis-backed rate limiting algorithms (Day 48).
-
-Validates non-blocking async execution, Lua atomicity, and quota correctness
-for all 5 rate limiting algorithms running over redis.asyncio.
-"""
+"""Tests for Asynchronous Redis-backed rate limiting algorithms."""
 
 import asyncio
 
@@ -93,7 +89,7 @@ async def test_async_leaky_bucket(async_redis):
 
 @pytest.mark.asyncio
 async def test_async_middleware_integration(async_redis):
-    """Verifies RateLimitMiddleware with async Redis client under AsyncClient."""
+    """Check RateLimitMiddleware with async Redis client under AsyncClient."""
     app = FastAPI(title="AsyncRateFortress")
     rules = {
         "default": EndpointRule(limit=3, window_seconds=60, algorithm="token_bucket"),

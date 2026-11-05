@@ -1,4 +1,4 @@
-"""Unit and multi-instance tests for RedisFixedWindow rate limiter (Day 35)."""
+"""Unit and multi-instance tests for RedisFixedWindow rate limiter."""
 
 import time
 
@@ -43,9 +43,7 @@ def test_independent_per_user(redis_client):
 
 
 def test_multi_instance_shared_state(redis_client):
-    """Simulates two distinct application servers (App Server A and App Server B)
-    sharing the same distributed Redis cluster.
-    """
+    """Simulates two distinct application servers (App Server A and App Server B)."""
     server_a = RedisFixedWindow(redis_client, limit=4, window_seconds=10)
     server_b = RedisFixedWindow(redis_client, limit=4, window_seconds=10)
 
@@ -63,6 +61,6 @@ def test_multi_instance_shared_state(redis_client):
     # 6th request: Server B tries to handle it -> Blocked!
     assert server_b.is_allowed("tenant_shared") is False
 
-    # Verify both servers report remaining = 0
+    # Check both servers report remaining = 0
     assert server_a.remaining("tenant_shared") == 0
     assert server_b.remaining("tenant_shared") == 0

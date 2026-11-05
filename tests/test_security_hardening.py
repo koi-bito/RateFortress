@@ -1,12 +1,4 @@
-"""Security Hardening and API Key Lifecycle Tests (Day 96).
-
-Validates:
-1. Cryptographic key issuance and constant-time verification.
-2. Zero-downtime key rotation with dual-validity grace periods.
-3. Key revocation and expiration enforcement.
-4. Masking of API credentials in logs.
-5. Protection and explicit rate limits on internal tooling endpoints (/compare, /metrics).
-"""
+"""Security Hardening and API Key Lifecycle Tests."""
 
 import json
 import logging
@@ -18,7 +10,7 @@ from src.monitoring.logging_config import JSONLogFormatter
 
 
 def test_api_key_issuance_and_verification():
-    """Validates secure key generation and constant-time verification."""
+    """Check secure key generation and constant-time verification."""
     manager = APIKeyManager()
     key = manager.issue_key(tier="paid", limit_multiplier=10, description="Test client key")
 
@@ -37,7 +29,7 @@ def test_api_key_issuance_and_verification():
 
 
 def test_zero_downtime_key_rotation_grace_period():
-    """Validates that during rotation, both old and new keys remain valid until grace period expires."""
+    """Check during rotation, both old and new keys remain valid until grace period expires."""
     manager = APIKeyManager()
     old_key = manager.issue_key(tier="enterprise", limit_multiplier=50)
 
@@ -46,7 +38,7 @@ def test_zero_downtime_key_rotation_grace_period():
     assert rotated_old == old_key
     assert new_key != old_key
 
-    # Immediately after rotation, BOTH keys must verify successfully
+    # Immediately after rotation, BOTH keys must check successfully
     assert manager.verify_key(new_key) is not None
     assert manager.verify_key(old_key) is not None
 
@@ -59,7 +51,7 @@ def test_zero_downtime_key_rotation_grace_period():
 
 
 def test_key_revocation():
-    """Validates immediate key revocation."""
+    """Check immediate key revocation."""
     manager = APIKeyManager()
     key = manager.issue_key(tier="free", limit_multiplier=1)
 
@@ -72,14 +64,14 @@ def test_key_revocation():
 
 
 def test_mask_key_utility():
-    """Validates that secret keys are safely truncated and masked."""
+    """Check secret keys are safely truncated and masked."""
     assert mask_key("key_enterprise_999") == "key_...999"
     assert mask_key("short") == "***"
     assert mask_key("") == ""
 
 
 def test_json_log_formatter_masks_client_api_keys():
-    """Validates that sensitive client API keys never leak into JSON logs."""
+    """Check sensitive client API keys never leak into JSON logs."""
     formatter = JSONLogFormatter(mask_secrets=True)
     record = logging.LogRecord(
         name="ratefortress.test",
@@ -101,7 +93,7 @@ def test_json_log_formatter_masks_client_api_keys():
 
 
 def test_internal_endpoints_explicitly_rate_limited():
-    """Validates that /compare and /metrics have explicit rate-limiting rules."""
+    """Check /compare and /metrics have explicit rate-limiting rules."""
     assert "/compare" in DEFAULT_ROUTE_RULES
     assert "/metrics" in DEFAULT_ROUTE_RULES
 
@@ -115,7 +107,7 @@ def test_internal_endpoints_explicitly_rate_limited():
 
 
 def test_private_subnets_untrusted_by_default():
-    """Verifies that private subnets are untrusted by default, ignoring spoofed X-Forwarded-For."""
+    """Check private subnets are untrusted by default, ignoring spoofed X-Forwarded-For."""
     from src.middleware.trusted_proxy import resolve_client_ip
 
     # Without explicit configuration, private IPs (10.x, 192.168.x, 172.16.x) are untrusted

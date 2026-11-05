@@ -1,9 +1,4 @@
-"""Distributed Multi-Instance Integration Tests (Day 43).
-
-Proves that multiple independent FastAPI application server instances sharing a common
-Redis backend enforce a single, unified global rate limit across the cluster, preventing
-cluster-multiplied quota leaks when traffic is balanced across nodes.
-"""
+"""Distributed Multi-Instance Integration Tests."""
 
 from fastapi import FastAPI
 from starlette.testclient import TestClient
@@ -30,7 +25,7 @@ def _create_app_instance(
 
 
 def test_two_app_instances_shared_token_bucket(redis_client):
-    """Verifies two FastAPI instances share a unified Token Bucket rate limit."""
+    """Check two FastAPI instances share a unified Token Bucket rate limit."""
     limit = 10
     app1 = _create_app_instance(redis_client, algorithm="token_bucket", limit=limit)
     app2 = _create_app_instance(redis_client, algorithm="token_bucket", limit=limit)
@@ -58,7 +53,7 @@ def test_two_app_instances_shared_token_bucket(redis_client):
 
 
 def test_two_app_instances_shared_sliding_window_log(redis_client):
-    """Verifies two FastAPI instances share a unified Sliding Window Log quota."""
+    """Check two FastAPI instances share a unified Sliding Window Log quota."""
     limit = 6
     app1 = _create_app_instance(
         redis_client, algorithm="sliding_window_log", limit=limit
@@ -84,7 +79,7 @@ def test_two_app_instances_shared_sliding_window_log(redis_client):
 
 
 def test_two_app_instances_shared_fixed_window(redis_client):
-    """Verifies two FastAPI instances share a unified Fixed Window quota."""
+    """Check two FastAPI instances share a unified Fixed Window quota."""
     limit = 4
     app1 = _create_app_instance(redis_client, algorithm="fixed_window", limit=limit)
     app2 = _create_app_instance(redis_client, algorithm="fixed_window", limit=limit)

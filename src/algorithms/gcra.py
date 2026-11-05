@@ -1,12 +1,4 @@
-"""Generic Cell Rate Algorithm (GCRA) rate limiter.
-
-GCRA is a leaky bucket / token bucket equivalent based on a virtual scheduling algorithm.
-Instead of tracking token counts or logging timestamps, GCRA models traffic arrivals
-against a Theoretical Arrival Time (TAT). A request is permitted if its theoretical arrival
-time does not exceed the burst tolerance limit.
-
-Used in production by Stripe and Redis Cell.
-"""
+"""Generic Cell Rate Algorithm (GCRA) rate limiter."""
 
 from __future__ import annotations
 
@@ -18,16 +10,7 @@ from cachetools import LRUCache
 
 
 class GCRA:
-    """Generic Cell Rate Algorithm (GCRA) rate limiter.
-
-    Attributes:
-        limit: Number of requests permitted within the period.
-        period: Time window duration in seconds.
-        emission_interval: Spacing between cells (period / limit).
-        burst_tolerance: Maximum allowable burst offset (emission_interval * (limit - 1)).
-        max_clients: Maximum client entries retained in memory before LRU eviction.
-        now_fn: Callable returning current time in seconds (default: time.time).
-    """
+    """Generic Cell Rate Algorithm (GCRA) rate limiter."""
 
     def __init__(
         self,
@@ -57,15 +40,6 @@ class GCRA:
         return self._now_fn() if self._now_fn is not None else time.time()
 
     def is_allowed(self, user_id: str, cost: int = 1) -> bool:
-        """Determines if a request from user_id costing `cost` cells is permitted.
-
-        Args:
-            user_id: Unique identifier for the client.
-            cost: Number of cell slots requested (default: 1).
-
-        Returns:
-            True if allowed, False if throttled.
-        """
         if cost <= 0:
             raise ValueError("Requested cost must be positive.")
 
@@ -81,7 +55,6 @@ class GCRA:
         return False
 
     def get_remaining(self, user_id: str) -> int:
-        """Returns estimated remaining requests available within the current period."""
         now = self._now()
         current_tat = self.tat.get(user_id, 0.0)
         if current_tat <= now:
@@ -91,7 +64,6 @@ class GCRA:
         return max(0, min(self.limit, int(remaining)))
 
     def get_retry_after(self, user_id: str) -> int:
-        """Returns the number of seconds until the client is allowed to send another 1-cost request."""
         now = self._now()
         current_tat = max(now, self.tat.get(user_id, 0.0))
         new_tat = current_tat + self.emission_interval

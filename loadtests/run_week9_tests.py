@@ -1,12 +1,4 @@
-"""Week 9 Load Testing Suite: k6, Locust vs k6 Comparison, Spike & Soak Testing.
-
-Implements the complete roadmap for Week 9 (Days 52–56):
-- Day 52: k6 Setup & Comparison Test against FastAPI RateFortress gateway.
-- Day 53: Locust vs k6 empirical benchmark comparison under identical load profile (100 -> 500 users).
-- Day 54: Instant Spike Testing (10 -> 1500 users) & recovery latency evaluation.
-- Day 55: Soak Testing (sustained load) with continuous memory profiling of FastAPI and Redis.
-- Day 56: Consolidated reports, charts, and BENCHMARKS.md update.
-"""
+"""Load testing suite: k6, Locust comparison, spike, and soak testing."""
 
 import csv
 import json

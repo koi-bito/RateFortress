@@ -1,4 +1,4 @@
-"""Unit and integration tests for RedisTokenBucket algorithm."""
+"""Tests for RedisTokenBucket algorithm."""
 
 import time
 
@@ -41,7 +41,7 @@ def test_capacity_cap_after_idle(redis_client):
     limiter = RedisTokenBucket(redis_client, capacity=4, refill_rate_per_sec=10.0)
     user = "user_cap"
 
-    # Wait to ensure refill doesn't exceed capacity
+    # Wait to check refill doesn't exceed capacity
     time.sleep(0.5)
     assert limiter.remaining(user) == 4
 
